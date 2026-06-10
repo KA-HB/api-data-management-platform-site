@@ -1,10 +1,10 @@
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { serviceClient, userClient } from "../_shared/supabase.ts";
 
-const resources = [
+const resources: Array<{ endpoint: string; dataset: string; useDateRange?: boolean }> = [
   { endpoint: "users", dataset: "Employees" },
-  { endpoint: "timesheets", dataset: "Timesheets" },
-  { endpoint: "time_off_requests", dataset: "PTO" },
+  { endpoint: "timesheets", dataset: "Timesheets", useDateRange: true },
+  { endpoint: "time_off_requests", dataset: "PTO", useDateRange: true },
   { endpoint: "jobcodes", dataset: "Job Codes" },
   { endpoint: "clients", dataset: "Customers" },
   { endpoint: "groups", dataset: "Groups" },
@@ -65,12 +65,20 @@ Deno.serve(async (req) => {
   if (req.method === "POST" && action === "settings") {
     const body = await req.json();
     const encryptedSecret = btoa(`${body.client_secret}:${Deno.env.get("QB_TIME_ENCRYPTION_KEY") || "local"}`);
-    const { data, error } = await service.from("qbtime_settings").insert({
+    const { data: existing } = await service.from("qbtime_settings").select("id").order("created_at", { ascending: false }).limit(1).maybeSingle();
+    const values = {
       client_id: body.client_id,
       encrypted_secret: encryptedSecret,
       redirect_uri: body.redirect_uri,
+    };
+    const insertValues = {
+      ...values,
       tenant_info: {},
-    }).select("id,client_id,redirect_uri,tenant_info,last_sync,created_at").single();
+    };
+    const query = existing
+      ? service.from("qbtime_settings").update(values).eq("id", existing.id)
+      : service.from("qbtime_settings").insert(insertValues);
+    const { data, error } = await query.select("id,client_id,redirect_uri,tenant_info,last_sync,created_at").single();
     if (error) return jsonResponse({ error: error.message }, 400);
     await userSupabase.rpc("log_activity", { action_name: "qbtime.settings_saved", details_json: { id: data.id } });
     return jsonResponse({ data }, 201);
@@ -122,29 +130,48 @@ async function runSync(supabase: ReturnType<typeof serviceClient>) {
   const { data: settings } = await supabase.from("qbtime_settings").select("*").order("created_at", { ascending: false }).limit(1).single();
   const { data: log } = await supabase.from("sync_logs").insert({ status: "running", started_at: started }).select("id").single();
   const stats: Record<string, number> = {};
+  const errors: Array<{ dataset: string; message: string }> = [];
 
   try {
     let accessToken = settings.access_token;
     if (!accessToken) throw new Error("QuickBooks Time is not connected");
 
     for (const resource of resources) {
-      const rows = await fetchAll(resource.endpoint, accessToken);
-      stats[resource.dataset] = rows.length;
-      await upsertResourceDataset(supabase, resource.dataset, rows);
+      try {
+        const rows = await fetchAll(resource.endpoint, accessToken, Boolean(resource.useDateRange));
+        stats[resource.dataset] = rows.length;
+        await upsertResourceDataset(supabase, resource.dataset, rows);
+      } catch (error) {
+        errors.push({ dataset: resource.dataset, message: error.message || "Sync failed" });
+      }
     }
 
     await supabase.from("qbtime_settings").update({ last_sync: new Date().toISOString() }).eq("id", settings.id);
-    await supabase.from("sync_logs").update({ status: "success", stats, finished_at: new Date().toISOString() }).eq("id", log.id);
-    return { status: "success", stats };
+    const status = errors.length ? "partial" : "success";
+    await supabase.from("sync_logs").update({
+      status,
+      message: errors.map((error) => `${error.dataset}: ${error.message}`).join("; ") || null,
+      stats: { ...stats, errors },
+      finished_at: new Date().toISOString(),
+    }).eq("id", log.id);
+    return { status, stats, errors };
   } catch (error) {
     await supabase.from("sync_logs").update({ status: "failed", message: error.message, stats, finished_at: new Date().toISOString() }).eq("id", log.id);
     throw error;
   }
 }
 
-async function fetchAll(resource: string, accessToken: string) {
+async function fetchAll(resource: string, accessToken: string, useDateRange = false) {
   const base = Deno.env.get("QB_TIME_API_URL") || "https://rest.tsheets.com/api/v1";
-  const response = await fetch(`${base}/${resource}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const url = new URL(`${base}/${resource}`);
+  if (useDateRange) {
+    const end = new Date();
+    const start = new Date();
+    start.setFullYear(start.getFullYear() - 1);
+    url.searchParams.set("start_date", start.toISOString().slice(0, 10));
+    url.searchParams.set("end_date", end.toISOString().slice(0, 10));
+  }
+  const response = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!response.ok) throw new Error(`QuickBooks Time ${resource} sync failed: ${response.status}`);
   const payload = await response.json();
   const container = payload.results?.[resource] || payload.results || [];

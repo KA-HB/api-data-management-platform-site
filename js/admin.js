@@ -1,7 +1,7 @@
 import { requireAuth, renderShell } from "./auth.js";
 import { FUNCTIONS_BASE_URL } from "./config.js";
 import { supabase } from "./supabaseClient.js";
-import { $, escapeHtml, renderRows, toast } from "./ui.js";
+import { $, escapeHtml, renderRows, setButtonBusy, toast } from "./ui.js";
 
 const profile = await requireAuth("admin");
 if (profile) {
@@ -19,19 +19,23 @@ async function loadUsers() {
     (r) => escapeHtml(r.role),
     (r) => r.active ? "<span class='status ok'>Active</span>" : "<span class='status danger'>Disabled</span>",
     (r) => escapeHtml(new Date(r.created_at).toLocaleDateString()),
-    (r) => `<button class="secondary" data-role="${r.id}" data-next="${r.role === "admin" ? "user" : "admin"}">Toggle Role</button> <button class="danger" data-disable="${r.id}">${r.active ? "Disable" : "Enable"}</button>`,
+    (r) => r.id === profile.id
+      ? "<span class='status ok'>Current user</span>"
+      : `<button class="secondary" data-role="${r.id}" data-next="${r.role === "admin" ? "user" : "admin"}">Toggle Role</button> <button class="danger" data-disable="${r.id}">${r.active ? "Disable" : "Enable"}</button>`,
   ]);
-  document.querySelectorAll("[data-role]").forEach((btn) => btn.addEventListener("click", () => updateUser(btn.dataset.role, { role: btn.dataset.next })));
-  document.querySelectorAll("[data-disable]").forEach((btn) => btn.addEventListener("click", () => updateUser(btn.dataset.disable, { active: btn.textContent === "Enable" })));
+  document.querySelectorAll("[data-role]").forEach((btn) => btn.addEventListener("click", () => updateUser(btn.dataset.role, { role: btn.dataset.next }, btn)));
+  document.querySelectorAll("[data-disable]").forEach((btn) => btn.addEventListener("click", () => updateUser(btn.dataset.disable, { active: btn.textContent === "Enable" }, btn)));
 }
 
-async function updateUser(id, patch) {
+async function updateUser(id, patch, button = null) {
+  setButtonBusy(button, true, "Saving...");
   const response = await fetch(`${FUNCTIONS_BASE_URL}/user-admin`, {
     method: "PATCH",
     headers: await authHeaders(),
     body: JSON.stringify({ id, ...patch }),
   });
   const payload = await response.json();
+  setButtonBusy(button, false);
   if (!response.ok) return toast(payload.error, "error");
   toast("User updated.");
   loadUsers();
@@ -39,6 +43,8 @@ async function updateUser(id, patch) {
 
 async function inviteUser(event) {
   event.preventDefault();
+  const button = event.submitter || event.target.querySelector("button");
+  setButtonBusy(button, true, "Creating...");
   const response = await fetch(`${FUNCTIONS_BASE_URL}/user-admin`, {
     method: "POST",
     headers: await authHeaders(),
@@ -48,6 +54,7 @@ async function inviteUser(event) {
     }),
   });
   const payload = await response.json();
+  setButtonBusy(button, false);
   if (!response.ok) return toast(payload.error, "error");
   toast(`User created. Temporary password: ${payload.data.temporary_password}`);
   event.target.reset();

@@ -192,6 +192,49 @@ td pre { margin: 0; white-space: pre-wrap; font-size: 12px; }
   margin: 12px 0;
 }
 
+.notice.error { border-color: #f3a6a0; background: #fef3f2; color: var(--danger); }
+.notice.info { border-color: #9cc8ff; background: #eff6ff; color: #1d4ed8; }
+.notice.success { border-color: #86efac; background: #f0fdf4; color: var(--ok); }
+.notice.loading { border-color: #9cc8ff; background: #eff6ff; color: #1d4ed8; }
+
+.progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+  margin-top: 10px;
+}
+
+.progress-bar {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--brand);
+  transition: width .2s ease;
+}
+
+.progress.indeterminate .progress-bar {
+  width: 35%;
+  animation: progress-slide 1.15s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
+
+button.is-busy::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin .75s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .hidden { display: none !important; }
 
 @media (max-width: 860px) {
