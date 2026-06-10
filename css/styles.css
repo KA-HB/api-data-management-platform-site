@@ -162,6 +162,7 @@ button, .button {
 button.secondary, .button.secondary { background: #fff; color: var(--ink); border-color: var(--line); }
 button.danger { background: var(--danger); }
 button:disabled { opacity: .6; cursor: wait; }
+.form-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 
 .table-wrap { overflow: auto; }
 table { width: 100%; border-collapse: collapse; min-width: 720px; }

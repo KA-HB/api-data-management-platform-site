@@ -9,6 +9,7 @@ if (profile) {
   loadDatasets();
   $("#dataset-form")?.addEventListener("submit", saveDataset);
   $("#upload-form")?.addEventListener("submit", uploadData);
+  $("#dataset-cancel-edit")?.addEventListener("click", cancelEdit);
 }
 
 async function loadDatasets() {
@@ -21,10 +22,17 @@ async function loadDatasets() {
     (r) => escapeHtml(r.source_type),
     (r) => String(r.record_count || 0),
     (r) => escapeHtml(new Date(r.created_at).toLocaleDateString()),
-    (r) => profile.role === "admin" ? `<button class="secondary" data-edit="${r.id}">Edit</button> <button class="danger" data-delete="${r.id}">Delete</button>` : `<a class="button secondary" href="./search.html">Open</a>`,
+    (r) => profile.role === "admin" ? `<div class="form-actions"><button class="secondary" type="button" data-edit="${r.id}">Edit</button><button class="danger" type="button" data-delete="${r.id}">Delete</button></div>` : `<a class="button secondary" href="./search.html">Open</a>`,
   ]);
-  tbody.querySelectorAll("[data-edit]").forEach((btn) => btn.addEventListener("click", () => editDataset(data.find((row) => row.id === btn.dataset.edit))));
-  tbody.querySelectorAll("[data-delete]").forEach((btn) => btn.addEventListener("click", () => deleteDataset(btn.dataset.delete)));
+  tbody.onclick = (event) => {
+    const editButton = event.target.closest("[data-edit]");
+    if (editButton) {
+      editDataset(data.find((row) => row.id === editButton.dataset.edit));
+      return;
+    }
+    const deleteButton = event.target.closest("[data-delete]");
+    if (deleteButton) deleteDataset(deleteButton.dataset.delete);
+  };
 }
 
 function editDataset(dataset) {
@@ -33,9 +41,30 @@ function editDataset(dataset) {
   $("#dataset-name").value = dataset.name || "";
   $("#dataset-description").value = dataset.description || "";
   $("#dataset-source").value = dataset.source_type || "upload";
-  const button = $("#dataset-form button");
-  if (button) button.textContent = "Save Changes";
-  toast(`Editing ${dataset.name}. Submit the form to save changes.`, "info");
+  setEditMode(dataset);
+  $("#dataset-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  $("#dataset-name")?.focus();
+}
+
+function setEditMode(dataset) {
+  $("#dataset-form-title").textContent = dataset ? "Edit Dataset" : "Create Dataset";
+  $("#dataset-save-button").textContent = dataset ? "Save Changes" : "Create";
+  $("#dataset-cancel-edit")?.classList.toggle("hidden", !dataset);
+  const notice = $("#dataset-edit-notice");
+  if (!notice) return;
+  if (dataset) {
+    notice.textContent = `Editing ${dataset.name}. Save changes or cancel to return to creating a new dataset.`;
+    notice.classList.remove("hidden");
+  } else {
+    notice.textContent = "";
+    notice.classList.add("hidden");
+  }
+}
+
+function cancelEdit() {
+  editingDatasetId = null;
+  $("#dataset-form")?.reset();
+  setEditMode(null);
 }
 
 async function saveDataset(event) {
@@ -57,7 +86,7 @@ async function saveDataset(event) {
   if (error) return toast(error.message, "error");
   event.target.reset();
   editingDatasetId = null;
-  if (button) button.textContent = "Create";
+  setEditMode(null);
   toast(wasEditing ? "Dataset updated." : "Dataset created.", "success");
   loadDatasetOptions();
   loadDatasets();
