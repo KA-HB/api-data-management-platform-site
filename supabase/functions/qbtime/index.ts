@@ -4,7 +4,6 @@ import { serviceClient, userClient } from "../_shared/supabase.ts";
 const resources: Array<{ endpoint: string; dataset: string; useDateRange?: boolean }> = [
   { endpoint: "users", dataset: "Employees" },
   { endpoint: "timesheets", dataset: "Timesheets", useDateRange: true },
-  { endpoint: "time_off_requests", dataset: "PTO" },
   { endpoint: "jobcodes", dataset: "Job Codes" },
   { endpoint: "clients", dataset: "Customers" },
   { endpoint: "groups", dataset: "Groups" },

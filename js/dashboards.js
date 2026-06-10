@@ -63,7 +63,6 @@ async function loadQbVisuals() {
   renderChart("#hours-by-jobcode", "bar", data.hours_by_jobcode || [], "jobcode", "hours", "Hours");
   renderChart("#hours-by-service-item", "bar", data.hours_by_service_item || [], "service_item", "hours", "Hours");
   renderChart("#hours-over-time", "line", data.hours_by_day || [], "date", "hours", "Hours");
-  renderChart("#pto-by-employee", "bar", data.pto_by_employee || [], "employee", "hours", "Hours");
   setText("#qb-filter-summary", `${formatNumber(data.filtered_timesheets)} timesheets, ${formatNumber(data.filtered_hours)} hours`);
 }
 
