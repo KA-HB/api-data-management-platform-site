@@ -21,6 +21,27 @@ Deno.serve(async (req) => {
     return jsonResponse({ data: await runSync(serviceClient()) });
   }
 
+  if (req.method === "GET" && action === "callback") {
+    const code = url.searchParams.get("code");
+    if (!code) return htmlResponse("QuickBooks Time connection failed: missing authorization code.", 400);
+
+    try {
+      const service = serviceClient();
+      const { data: settings } = await service.from("qbtime_settings").select("*").order("created_at", { ascending: false }).limit(1).single();
+      const token = await exchangeCode(settings, code);
+      const { error } = await service.from("qbtime_settings").update({
+        access_token: token.access_token,
+        refresh_token: token.refresh_token,
+        token_expires_at: new Date(Date.now() + (token.expires_in || 3600) * 1000).toISOString(),
+        tenant_info: token.company || {},
+      }).eq("id", settings.id);
+      if (error) throw error;
+      return htmlResponse("QuickBooks Time is connected. You can close this tab and return to the data platform.");
+    } catch (error) {
+      return htmlResponse(`QuickBooks Time connection failed: ${escapeHtml(error.message || "Unexpected error")}`, 500);
+    }
+  }
+
   const userSupabase = userClient(req);
   const { data: auth } = await userSupabase.auth.getUser();
   if (!auth.user) return jsonResponse({ error: "Authentication required" }, 401);
@@ -151,4 +172,33 @@ async function upsertResourceDataset(supabase: ReturnType<typeof serviceClient>,
 async function digest(value: string) {
   const buffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(buffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function htmlResponse(message: string, status = 200) {
+  return new Response(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QuickBooks Time Connection</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; display: grid; min-height: 100vh; place-items: center; background: #f6f7f9; color: #17202a; }
+    main { max-width: 560px; padding: 28px; background: white; border: 1px solid #d9dee7; border-radius: 8px; }
+  </style>
+</head>
+<body><main><h1>QuickBooks Time</h1><p>${message}</p></main></body>
+</html>`, {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  }[char] || char));
 }
