@@ -1,0 +1,8 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>API Documentation</title><link rel="stylesheet" href="../css/styles.css"></head>
+<body><div class="app-shell"><aside class="sidebar"><div class="brand">Data Platform</div><nav class="nav"><a href="./user-dashboard.html">Dashboard</a><a href="./search.html">Search Data</a><a href="./api-keys.html">API Keys</a><a class="active" href="./api-docs.html">API Docs</a><button data-logout>Logout</button></nav></aside>
+<main class="content"><h1>API Documentation</h1><section class="panel"><h2>Authentication</h2><pre>Authorization: Bearer DATA_PLATFORM_API_KEY</pre><h2>Endpoints</h2><pre>GET /functions/v1/api/datasets?page=1&page_size=50
+GET /functions/v1/api/datasets/{id}
+GET /functions/v1/api/datasets/{id}/records?search=term&page=1&page_size=50</pre><h2>Response Shape</h2><pre>{
+  "data": [],
+  "meta": { "page": 1, "page_size": 50, "total": 100 }
+}</pre></section></main></div><script type="module">import{requireAuth,renderShell}from"../js/auth.js";const p=await requireAuth();if(p)renderShell(p);</script></body></html>

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API Data Management Platform</title>
+  <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+  <main class="login-shell">
+    <section class="login-card">
+      <h1>API Data Management Platform</h1>
+      <p>Secure access to internal datasets, APIs, and QuickBooks Time data.</p>
+      <form id="login-form">
+        <label>Email <input id="email" type="email" autocomplete="email" required></label>
+        <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+        <button type="submit">Log in</button>
+      </form>
+      <hr>
+      <form id="reset-form">
+        <label>Password reset email <input id="reset-email" type="email" autocomplete="email"></label>
+        <button class="secondary" type="submit">Send reset link</button>
+      </form>
+    </section>
+  </main>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>

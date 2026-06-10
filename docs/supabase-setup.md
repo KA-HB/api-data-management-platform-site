@@ -1,0 +1,42 @@
+# Supabase Setup
+
+## Authentication
+
+Enable email/password authentication in Supabase Auth. Password reset links should redirect to your hosted `index.html`.
+
+## Database
+
+Run:
+
+1. `supabase/migrations/001_schema.sql`
+2. `supabase/migrations/002_storage.sql`
+
+Confirm RLS is enabled on all public tables.
+
+## Storage
+
+The `imports` bucket is private and admin-only. The current frontend parses files in the browser before inserting records, but the bucket is ready for future server-side import processing.
+
+## Edge Function Environment
+
+Required:
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `QB_TIME_ENCRYPTION_KEY`
+- `SCHEDULE_SECRET`
+
+Optional overrides:
+
+- `QB_TIME_AUTH_URL`
+- `QB_TIME_TOKEN_URL`
+- `QB_TIME_API_URL`
+
+## Recommended Production Hardening
+
+- Replace sample QuickBooks secret encoding with Supabase Vault or external KMS encryption.
+- Add domain-specific CORS allowlists in `_shared/cors.ts`.
+- Move very large imports to a background Edge Function or queue.
+- Add retention policies for activity and sync logs.
+- Add dataset permission management UI if users should receive partial rather than admin-managed access.

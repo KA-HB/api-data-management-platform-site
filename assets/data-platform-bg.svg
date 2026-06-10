@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" role="img" aria-label="Abstract data grid">
+  <rect width="1600" height="1000" fill="#0f766e"/>
+  <g opacity=".42" fill="none" stroke="#ffffff" stroke-width="2">
+    <path d="M120 180h1360M120 340h1360M120 500h1360M120 660h1360M120 820h1360"/>
+    <path d="M240 90v820M480 90v820M720 90v820M960 90v820M1200 90v820M1440 90v820"/>
+  </g>
+  <g fill="#ffffff" opacity=".78">
+    <circle cx="240" cy="180" r="10"/><circle cx="720" cy="340" r="10"/><circle cx="1200" cy="500" r="10"/>
+    <circle cx="480" cy="660" r="10"/><circle cx="960" cy="820" r="10"/><circle cx="1440" cy="340" r="10"/>
+  </g>
+  <g fill="none" stroke="#facc15" stroke-width="8" opacity=".68">
+    <path d="M240 180 720 340 1200 500 1440 340"/>
+    <path d="M480 660 960 820 1200 500"/>
+  </g>
+</svg>

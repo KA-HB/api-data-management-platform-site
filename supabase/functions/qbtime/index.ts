@@ -1,0 +1,154 @@
+import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { serviceClient, userClient } from "../_shared/supabase.ts";
+
+const resources = [
+  { endpoint: "users", dataset: "Employees" },
+  { endpoint: "timesheets", dataset: "Timesheets" },
+  { endpoint: "time_off_requests", dataset: "PTO" },
+  { endpoint: "jobcodes", dataset: "Job Codes" },
+  { endpoint: "clients", dataset: "Customers" },
+  { endpoint: "groups", dataset: "Groups" },
+  { endpoint: "customfields", dataset: "Custom Fields" },
+];
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  const url = new URL(req.url);
+  const action = url.searchParams.get("action") || "settings";
+  const scheduleSecret = Deno.env.get("SCHEDULE_SECRET");
+  if (req.method === "POST" && action === "sync" && scheduleSecret && req.headers.get("x-schedule-secret") === scheduleSecret) {
+    return jsonResponse({ data: await runSync(serviceClient()) });
+  }
+
+  const userSupabase = userClient(req);
+  const { data: auth } = await userSupabase.auth.getUser();
+  if (!auth.user) return jsonResponse({ error: "Authentication required" }, 401);
+
+  const { data: profile } = await userSupabase.from("profiles").select("role").eq("id", auth.user.id).single();
+  if (profile?.role !== "admin") return jsonResponse({ error: "Admin role required" }, 403);
+
+  const service = serviceClient();
+
+  if (req.method === "GET" && action === "authorize-url") {
+    const { data: settings } = await service.from("qbtime_settings").select("*").order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (!settings) return jsonResponse({ error: "QuickBooks Time settings are not configured" }, 400);
+    const authUrl = new URL(Deno.env.get("QB_TIME_AUTH_URL") || "https://rest.tsheets.com/api/v1/authorize");
+    authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("client_id", settings.client_id);
+    authUrl.searchParams.set("redirect_uri", settings.redirect_uri);
+    authUrl.searchParams.set("state", crypto.randomUUID());
+    return jsonResponse({ data: { url: authUrl.toString() } });
+  }
+
+  if (req.method === "POST" && action === "settings") {
+    const body = await req.json();
+    const encryptedSecret = btoa(`${body.client_secret}:${Deno.env.get("QB_TIME_ENCRYPTION_KEY") || "local"}`);
+    const { data, error } = await service.from("qbtime_settings").insert({
+      client_id: body.client_id,
+      encrypted_secret: encryptedSecret,
+      redirect_uri: body.redirect_uri,
+      tenant_info: {},
+    }).select("id,client_id,redirect_uri,tenant_info,last_sync,created_at").single();
+    if (error) return jsonResponse({ error: error.message }, 400);
+    await userSupabase.rpc("log_activity", { action_name: "qbtime.settings_saved", details_json: { id: data.id } });
+    return jsonResponse({ data }, 201);
+  }
+
+  if (req.method === "POST" && action === "callback") {
+    const body = await req.json();
+    const { data: settings } = await service.from("qbtime_settings").select("*").order("created_at", { ascending: false }).limit(1).single();
+    const token = await exchangeCode(settings, body.code);
+    const { error } = await service.from("qbtime_settings").update({
+      access_token: token.access_token,
+      refresh_token: token.refresh_token,
+      token_expires_at: new Date(Date.now() + (token.expires_in || 3600) * 1000).toISOString(),
+      tenant_info: token.company || {},
+    }).eq("id", settings.id);
+    if (error) return jsonResponse({ error: error.message }, 400);
+    return jsonResponse({ ok: true });
+  }
+
+  if (req.method === "POST" && action === "sync") {
+    const result = await runSync(service);
+    await userSupabase.rpc("log_activity", { action_name: "qbtime.manual_sync", details_json: result });
+    return jsonResponse({ data: result });
+  }
+
+  const { data, error } = await service.from("qbtime_settings").select("id,client_id,redirect_uri,tenant_info,last_sync,created_at,updated_at").order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (error) return jsonResponse({ error: error.message }, 400);
+  return jsonResponse({ data });
+});
+
+async function exchangeCode(settings: Record<string, string>, code: string) {
+  const response = await fetch(Deno.env.get("QB_TIME_TOKEN_URL") || "https://rest.tsheets.com/api/v1/grant", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      grant_type: "authorization_code",
+      client_id: settings.client_id,
+      client_secret: atob(settings.encrypted_secret).split(":")[0],
+      code,
+      redirect_uri: settings.redirect_uri,
+    }),
+  });
+  if (!response.ok) throw new Error(`QuickBooks Time token exchange failed: ${response.status}`);
+  return response.json();
+}
+
+async function runSync(supabase: ReturnType<typeof serviceClient>) {
+  const started = new Date().toISOString();
+  const { data: settings } = await supabase.from("qbtime_settings").select("*").order("created_at", { ascending: false }).limit(1).single();
+  const { data: log } = await supabase.from("sync_logs").insert({ status: "running", started_at: started }).select("id").single();
+  const stats: Record<string, number> = {};
+
+  try {
+    let accessToken = settings.access_token;
+    if (!accessToken) throw new Error("QuickBooks Time is not connected");
+
+    for (const resource of resources) {
+      const rows = await fetchAll(resource.endpoint, accessToken);
+      stats[resource.dataset] = rows.length;
+      await upsertResourceDataset(supabase, resource.dataset, rows);
+    }
+
+    await supabase.from("qbtime_settings").update({ last_sync: new Date().toISOString() }).eq("id", settings.id);
+    await supabase.from("sync_logs").update({ status: "success", stats, finished_at: new Date().toISOString() }).eq("id", log.id);
+    return { status: "success", stats };
+  } catch (error) {
+    await supabase.from("sync_logs").update({ status: "failed", message: error.message, stats, finished_at: new Date().toISOString() }).eq("id", log.id);
+    throw error;
+  }
+}
+
+async function fetchAll(resource: string, accessToken: string) {
+  const base = Deno.env.get("QB_TIME_API_URL") || "https://rest.tsheets.com/api/v1";
+  const response = await fetch(`${base}/${resource}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!response.ok) throw new Error(`QuickBooks Time ${resource} sync failed: ${response.status}`);
+  const payload = await response.json();
+  const container = payload.results?.[resource] || payload.results || [];
+  return Array.isArray(container) ? container : Object.values(container);
+}
+
+async function upsertResourceDataset(supabase: ReturnType<typeof serviceClient>, resourceName: string, rows: unknown[]) {
+  const name = `QuickBooks Time ${resourceName}`;
+  const { data: dataset } = await supabase.from("datasets").upsert({
+    name,
+    description: `Synchronized ${resourceName} from QuickBooks Time`,
+    source_type: "quickbooks_time",
+    record_count: rows.length,
+  }, { onConflict: "name" }).select("id").single();
+
+  if (!dataset || !rows.length) return;
+  const records = await Promise.all(rows.map(async (row) => ({
+    dataset_id: dataset.id,
+    json_data: row,
+    source_hash: await digest(JSON.stringify(row)),
+  })));
+  await supabase.from("records").upsert(records, { onConflict: "dataset_id,source_hash" });
+}
+
+async function digest(value: string) {
+  const buffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(buffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
