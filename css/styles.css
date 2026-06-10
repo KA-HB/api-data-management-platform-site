@@ -118,9 +118,35 @@ p { color: var(--muted); margin: 0 0 14px; }
 .panel, .metric { padding: 18px; }
 .metric strong { display: block; font-size: 28px; }
 .metric span { color: var(--muted); }
+.chart-panel { min-height: 340px; }
+.chart-panel canvas { width: 100% !important; height: 260px !important; }
 
 form, .toolbar { display: grid; gap: 12px; }
 .toolbar { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
+.section-head, .pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.pager { margin-top: 14px; justify-content: flex-end; }
+.checkline {
+  display: flex;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+.checkline input { width: auto; }
+.checklist { display: grid; gap: 10px; }
+.checklist label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-weight: 550;
+}
+.checklist input { width: auto; margin-top: 3px; }
 
 label {
   display: grid;
@@ -182,6 +208,7 @@ td pre { margin: 0; white-space: pre-wrap; font-size: 12px; }
   color: #3730a3;
 }
 .status.ok { background: #dcfce7; color: var(--ok); }
+.status.warn { background: #fef3c7; color: #92400e; }
 .status.danger { background: #fee2e2; color: var(--danger); }
 
 .notice {

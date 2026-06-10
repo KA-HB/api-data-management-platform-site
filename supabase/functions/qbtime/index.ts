@@ -4,7 +4,7 @@ import { serviceClient, userClient } from "../_shared/supabase.ts";
 const resources: Array<{ endpoint: string; dataset: string; useDateRange?: boolean }> = [
   { endpoint: "users", dataset: "Employees" },
   { endpoint: "timesheets", dataset: "Timesheets", useDateRange: true },
-  { endpoint: "time_off_requests", dataset: "PTO", useDateRange: true },
+  { endpoint: "time_off_requests", dataset: "PTO" },
   { endpoint: "jobcodes", dataset: "Job Codes" },
   { endpoint: "clients", dataset: "Customers" },
   { endpoint: "groups", dataset: "Groups" },
@@ -127,6 +127,11 @@ async function exchangeCode(settings: Record<string, string>, code: string) {
 
 async function runSync(supabase: ReturnType<typeof serviceClient>) {
   const started = new Date().toISOString();
+  await supabase.from("sync_logs").update({
+    status: "failed",
+    message: "Sync timed out before completion",
+    finished_at: started,
+  }).eq("status", "running").is("finished_at", null);
   const { data: settings } = await supabase.from("qbtime_settings").select("*").order("created_at", { ascending: false }).limit(1).single();
   const { data: log } = await supabase.from("sync_logs").insert({ status: "running", started_at: started }).select("id").single();
   const stats: Record<string, number> = {};
@@ -135,6 +140,15 @@ async function runSync(supabase: ReturnType<typeof serviceClient>) {
   try {
     let accessToken = settings.access_token;
     if (!accessToken) throw new Error("QuickBooks Time is not connected");
+    if (settings.token_expires_at && new Date(settings.token_expires_at).getTime() < Date.now() + 120000) {
+      const refreshed = await refreshAccessToken(settings);
+      accessToken = refreshed.access_token;
+      await supabase.from("qbtime_settings").update({
+        access_token: refreshed.access_token,
+        refresh_token: refreshed.refresh_token || settings.refresh_token,
+        token_expires_at: new Date(Date.now() + (refreshed.expires_in || 3600) * 1000).toISOString(),
+      }).eq("id", settings.id);
+    }
 
     for (const resource of resources) {
       try {
@@ -161,21 +175,59 @@ async function runSync(supabase: ReturnType<typeof serviceClient>) {
   }
 }
 
+async function refreshAccessToken(settings: Record<string, string>) {
+  if (!settings.refresh_token) throw new Error("QuickBooks Time refresh token is missing");
+  const response = await fetch(Deno.env.get("QB_TIME_TOKEN_URL") || "https://rest.tsheets.com/api/v1/grant", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      grant_type: "refresh_token",
+      client_id: settings.client_id,
+      client_secret: atob(settings.encrypted_secret).split(":")[0],
+      refresh_token: settings.refresh_token,
+    }),
+  });
+  if (!response.ok) throw new Error(await responseError(response, "QuickBooks Time token refresh failed"));
+  return response.json();
+}
+
 async function fetchAll(resource: string, accessToken: string, useDateRange = false) {
   const base = Deno.env.get("QB_TIME_API_URL") || "https://rest.tsheets.com/api/v1";
-  const url = new URL(`${base}/${resource}`);
-  if (useDateRange) {
-    const end = new Date();
-    const start = new Date();
-    start.setFullYear(start.getFullYear() - 1);
-    url.searchParams.set("start_date", start.toISOString().slice(0, 10));
-    url.searchParams.set("end_date", end.toISOString().slice(0, 10));
+  const rows: unknown[] = [];
+  const perPage = Number(Deno.env.get("QB_TIME_PAGE_SIZE") || "200");
+  const maxPages = Number(Deno.env.get("QB_TIME_MAX_PAGES") || "10");
+  let page = 1;
+  let reachedPageCap = false;
+
+  while (page <= maxPages) {
+    const url = new URL(`${base}/${resource}`);
+    url.searchParams.set("per_page", String(perPage));
+    url.searchParams.set("page", String(page));
+    if (useDateRange) {
+      const end = new Date();
+      const start = new Date();
+      start.setFullYear(start.getFullYear() - 1);
+      url.searchParams.set("start_date", start.toISOString().slice(0, 10));
+      url.searchParams.set("end_date", end.toISOString().slice(0, 10));
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    const response = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` }, signal: controller.signal })
+      .finally(() => clearTimeout(timeout));
+    if (!response.ok) throw new Error(await responseError(response, `QuickBooks Time ${resource} sync failed`));
+    const payload = await response.json();
+    const container = payload.results?.[resource] || payload.results || [];
+    const pageRows = Array.isArray(container) ? container : Object.values(container);
+    rows.push(...pageRows);
+    if (!payload.more || pageRows.length === 0) break;
+    if (page === maxPages) reachedPageCap = true;
+    page += 1;
   }
-  const response = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
-  if (!response.ok) throw new Error(`QuickBooks Time ${resource} sync failed: ${response.status}`);
-  const payload = await response.json();
-  const container = payload.results?.[resource] || payload.results || [];
-  return Array.isArray(container) ? container : Object.values(container);
+
+  if (reachedPageCap) {
+    console.warn(`QuickBooks Time ${resource} reached page cap ${maxPages}; increase QB_TIME_MAX_PAGES for a deeper sync.`);
+  }
+  return rows;
 }
 
 async function upsertResourceDataset(supabase: ReturnType<typeof serviceClient>, resourceName: string, rows: unknown[]) {
@@ -193,7 +245,9 @@ async function upsertResourceDataset(supabase: ReturnType<typeof serviceClient>,
     json_data: row,
     source_hash: await digest(JSON.stringify(row)),
   })));
-  await supabase.from("records").upsert(records, { onConflict: "dataset_id,source_hash" });
+  for (let i = 0; i < records.length; i += 1000) {
+    await supabase.from("records").upsert(records.slice(i, i + 1000), { onConflict: "dataset_id,source_hash" });
+  }
 }
 
 async function digest(value: string) {
@@ -228,4 +282,17 @@ function escapeHtml(value: string) {
     "\"": "&quot;",
     "'": "&#39;",
   }[char] || char));
+}
+
+async function responseError(response: Response, fallback: string) {
+  const text = await response.text().catch(() => "");
+  let message = text;
+  try {
+    const parsed = text ? JSON.parse(text) : null;
+    message = parsed?.error?.message || parsed?.error || parsed?.message || text;
+  } catch {
+    message = text;
+  }
+  const clean = String(message || "").replace(/\s+/g, " ").slice(0, 240);
+  return `${fallback}: ${response.status}${clean ? ` - ${clean}` : ""}`;
 }

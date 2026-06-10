@@ -1,0 +1,21 @@
+revoke all on function public.can_access_dataset(uuid) from public;
+revoke all on function public.current_profile() from public;
+revoke all on function public.current_user_role() from public;
+revoke all on function public.dashboard_qbtime_rollups() from public;
+revoke all on function public.dashboard_summary() from public;
+revoke all on function public.handle_new_user() from public;
+revoke all on function public.is_admin() from public;
+revoke all on function public.log_activity(text, jsonb) from public;
+revoke all on function public.search_dataset_records(uuid, text, integer, integer) from public;
+revoke all on function public.search_records_advanced(uuid, text, text, text, timestamptz, timestamptz, text, text, text, text, boolean, text, text, text, integer, integer) from public;
+revoke all on function public.verify_api_key(text) from public;
+
+grant execute on function public.can_access_dataset(uuid) to authenticated;
+grant execute on function public.current_profile() to authenticated;
+grant execute on function public.current_user_role() to authenticated;
+grant execute on function public.dashboard_qbtime_rollups() to authenticated;
+grant execute on function public.dashboard_summary() to authenticated;
+grant execute on function public.is_admin() to authenticated;
+grant execute on function public.log_activity(text, jsonb) to authenticated;
+grant execute on function public.search_dataset_records(uuid, text, integer, integer) to authenticated;
+grant execute on function public.search_records_advanced(uuid, text, text, text, timestamptz, timestamptz, text, text, text, text, boolean, text, text, text, integer, integer) to authenticated;
