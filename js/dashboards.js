@@ -61,9 +61,8 @@ async function loadDashboard() {
     }
 
     const coverage = await callSearchSummary();
-    const fallbackCoverage = coverage.data ? null : await buildClientCoverageSummary();
-    renderGeneralDashboard(summary, coverage.data);
-    if (!coverage.data && fallbackCoverage) renderGeneralDashboard(summary, fallbackCoverage);
+    const fallbackCoverage = coverage.data ? null : buildFastCoverageSummary(summary);
+    renderGeneralDashboard(summary, coverage.data || fallbackCoverage);
 
     if (profile.role === "admin" && $("#qb-viz-filters")) await loadQbVisuals();
 
@@ -80,14 +79,32 @@ function renderGeneralDashboard(summary, coverage) {
   setText("#metric-keys", formatNumber(summary?.api_keys));
   setText("#metric-raw-records", formatNumber(coverage?.raw_records ?? summary?.records));
   setText("#metric-records", formatNumber(coverage?.unique_records ?? summary?.records));
-  setText("#metric-hours", coverage ? formatNumber(coverage.hours) : "-");
-  setText("#metric-employees", coverage ? formatNumber(coverage.employee_count) : "-");
-  setText("#metric-services", coverage ? formatNumber(coverage.service_item_count) : "-");
+  setText("#metric-hours", coverage?.hours === null ? "Pending" : formatNumber(coverage?.hours));
+  setText("#metric-employees", coverage?.employee_count === null ? "Pending" : formatNumber(coverage?.employee_count));
+  setText("#metric-services", coverage?.service_item_count === null ? "Pending" : formatNumber(coverage?.service_item_count));
   setText("#data-scope-summary", coverage ? scopeSummary(coverage) : `Showing ${formatNumber(summary?.records)} authorized records. Full-year hours, employees, service-item totals, and duplicate removal require the latest Supabase search migration.`);
 
-  renderChart("#records-by-dataset", "bar", coverage?.records_by_dataset || summary.records_by_dataset || [], "name", coverage ? "records" : "record_count", coverage ? "Unique Records" : "Records");
-  renderChart("#records-over-time", "line", coverage?.records_by_day || summary.records_by_day || [], "date", "records", coverage ? "Unique Records" : "Records");
-  renderChart("#activity-over-time", "line", summary.activity_by_day || [], "date", "events", "Events");
+  renderChart("#records-by-dataset", "bar", coverage?.records_by_dataset || summary?.records_by_dataset || [], "name", coverage ? "records" : "record_count", coverage ? "Unique Records" : "Records");
+  renderChart("#records-over-time", "line", coverage?.records_by_day || summary?.records_by_day || [], "date", "records", coverage ? "Unique Records" : "Records");
+  renderChart("#activity-over-time", "line", summary?.activity_by_day || [], "date", "events", "Events");
+}
+
+function buildFastCoverageSummary(summary) {
+  const rows = availableDatasets.length ? availableDatasets : summary?.recent_uploads || [];
+  const nonPtoRows = rows.filter((row) => !/pto/i.test(row.name || ""));
+  const rawRecords = nonPtoRows.reduce((total, row) => total + numeric(row.record_count), 0);
+  return {
+    is_fast_fallback: true,
+    raw_records: rawRecords || summary?.records || 0,
+    unique_records: rawRecords || summary?.records || 0,
+    duplicates_removed: null,
+    dataset_count: nonPtoRows.length || summary?.datasets || 0,
+    employee_count: null,
+    service_item_count: null,
+    hours: null,
+    records_by_dataset: nonPtoRows.map((row) => ({ name: row.name, records: numeric(row.record_count) })).sort((a, b) => b.records - a.records),
+    records_by_day: summary?.records_by_day || [],
+  };
 }
 
 function isExperienceDashboard() {
@@ -377,95 +394,6 @@ function normalizeExperienceRollup(data = {}) {
   };
 }
 
-async function buildClientCoverageSummary() {
-  if (!availableDatasets.length) return null;
-  const datasetIds = availableDatasets.map((dataset) => dataset.id);
-  const rows = [];
-  const pageSize = 1000;
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
-      .from("records")
-      .select("id,dataset_id,json_data,source_hash,created_at")
-      .in("dataset_id", datasetIds)
-      .range(from, from + pageSize - 1);
-    if (error) {
-      console.warn("Dashboard fallback summary failed", error);
-      return null;
-    }
-    rows.push(...(data || []));
-    if (!data || data.length < pageSize) break;
-  }
-  return summarizeRecords(rows);
-}
-
-function summarizeRecords(rows) {
-  const unique = new Map();
-  for (const row of rows || []) {
-    unique.set(row.source_hash || row.id, row);
-  }
-  const records = Array.from(unique.values());
-  const employees = new Set();
-  const services = new Set();
-  const byDataset = new Map();
-  const byDay = new Map();
-  let hours = 0;
-
-  for (const row of records) {
-    const normalized = normalizeRecord(row);
-    if (normalized.employee) employees.add(normalized.employee);
-    if (normalized.serviceItem) services.add(normalized.serviceItem);
-    hours += normalized.hours;
-    const dataset = availableDatasets.find((item) => item.id === row.dataset_id);
-    const datasetName = dataset?.name || "Unknown dataset";
-    byDataset.set(datasetName, (byDataset.get(datasetName) || 0) + 1);
-    if (normalized.date) byDay.set(normalized.date, (byDay.get(normalized.date) || 0) + 1);
-  }
-
-  return {
-    dataset_name: null,
-    raw_records: rows.length,
-    unique_records: records.length,
-    duplicates_removed: Math.max(rows.length - records.length, 0),
-    dataset_count: new Set(records.map((row) => row.dataset_id)).size,
-    employee_count: employees.size,
-    service_item_count: services.size,
-    hours: roundNumber(hours),
-    records_by_dataset: Array.from(byDataset, ([name, records]) => ({ name, records })).sort((a, b) => b.records - a.records),
-    records_by_day: Array.from(byDay, ([date, records]) => ({ date, records })).sort((a, b) => a.date.localeCompare(b.date)),
-  };
-}
-
-function normalizeRecord(row) {
-  const data = row.json_data || {};
-  const firstName = data.fname || data.first_name || data.firstName || "";
-  const lastName = data.lname || data.last_name || data.lastName || "";
-  const employee = [
-    data.employee_name,
-    data.employee,
-    `${firstName} ${lastName}`.trim(),
-    data.username,
-    data.user_name,
-    data.user_id,
-    data.employee_number,
-    data.email,
-  ].find((value) => String(value || "").trim());
-  const serviceItem = [
-    data["service item"],
-    data.service_item,
-    data.serviceItem,
-    data.service,
-  ].find((value) => String(value || "").trim() && String(value).trim() !== "No service item");
-  const seconds = numeric(data.duration_seconds ?? data.duration);
-  const hours = numeric(data.hours ?? data.Hours ?? data.total_hours ?? data.totalHours ?? (seconds ? seconds / 3600 : 0));
-  const date = String(data.local_date || data.date || data.start_date || data.created_at || row.created_at || "").slice(0, 10);
-  return {
-    employee: employee ? String(employee).trim() : "",
-    serviceItem: serviceItem ? String(serviceItem).trim() : "",
-    hours,
-    date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : "",
-  };
-}
-
 function renderRecentUploads(rows) {
   const tbody = $("#recent-uploads");
   if (!tbody) return;
@@ -504,10 +432,6 @@ function formatNumber(value) {
 function numeric(value) {
   const number = Number(value || 0);
   return Number.isFinite(number) ? number : 0;
-}
-
-function roundNumber(value) {
-  return Math.round(numeric(value) * 100) / 100;
 }
 
 function sumValues(rows, key) {
@@ -552,6 +476,9 @@ function isSchemaCacheError(error) {
 }
 
 function scopeSummary(data) {
+  if (data.is_fast_fallback) {
+    return `Fast dashboard mode: showing ${formatNumber(data.unique_records)} records across ${formatNumber(data.dataset_count)} dataset${Number(data.dataset_count) === 1 ? "" : "s"} from dataset metadata. Precise deduped hours, employees, and service items require the latest Supabase search migration.`;
+  }
   const scope = data.dataset_name || "All authorized datasets";
   const duplicateText = Number(data.duplicates_removed || 0)
     ? ` ${formatNumber(data.duplicates_removed)} duplicate rows excluded.`
