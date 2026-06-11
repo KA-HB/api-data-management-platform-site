@@ -27,7 +27,7 @@ if (profile) {
 async function loadDatasets() {
   const { data, error } = await supabase
     .from("datasets")
-    .select("id,name,record_count")
+    .select("id,name,source_type,record_count,updated_at")
     .neq("name", "QuickBooks Time PTO")
     .order("name");
   if (error) return toast(error.message, "error");
@@ -58,15 +58,36 @@ async function loadDashboard() {
       populateQbFilters(qbFilterOptions);
     }
 
-    renderChart("#activity-over-time", "line", summary.activity_by_day || [], "date", "events", "Events");
-    if (profile.role === "admin") await loadQbVisuals();
+    const coverage = await callSearchSummary();
+    renderGeneralDashboard(summary, coverage.data);
 
-    renderRecentUploads(summary.recent_uploads || []);
+    if (profile.role === "admin" && $("#qb-viz-filters")) await loadQbVisuals();
+
+    renderRecentUploads(isExperienceDashboard() ? summary.recent_uploads || [] : [...availableDatasets].sort((a, b) => Number(b.record_count || 0) - Number(a.record_count || 0)));
     renderRecentSyncs(summary.recent_syncs || []);
     renderRecentLogs(logs || []);
   } catch (error) {
     stopProgress(progress, `Error loading dashboard: ${error.message}`, "error");
   }
+}
+
+function renderGeneralDashboard(summary, coverage) {
+  setText("#metric-datasets", formatNumber(summary.datasets));
+  setText("#metric-keys", formatNumber(summary.api_keys));
+  setText("#metric-raw-records", formatNumber(coverage?.raw_records ?? summary.records));
+  setText("#metric-records", formatNumber(coverage?.unique_records ?? summary.records));
+  setText("#metric-hours", coverage ? formatNumber(coverage.hours) : "-");
+  setText("#metric-employees", coverage ? formatNumber(coverage.employee_count) : "-");
+  setText("#metric-services", coverage ? formatNumber(coverage.service_item_count) : "-");
+  setText("#data-scope-summary", coverage ? scopeSummary(coverage) : `Showing ${formatNumber(summary.records)} authorized records. Full-year hours, employees, service-item totals, and duplicate removal require the latest Supabase search migration.`);
+
+  renderChart("#records-by-dataset", "bar", coverage?.records_by_dataset || summary.records_by_dataset || [], "name", coverage ? "records" : "record_count", coverage ? "Unique Records" : "Records");
+  renderChart("#records-over-time", "line", coverage?.records_by_day || summary.records_by_day || [], "date", "records", coverage ? "Unique Records" : "Records");
+  renderChart("#activity-over-time", "line", summary.activity_by_day || [], "date", "events", "Events");
+}
+
+function isExperienceDashboard() {
+  return Boolean($("#qb-viz-filters"));
 }
 
 async function applyQbFilters(event) {
