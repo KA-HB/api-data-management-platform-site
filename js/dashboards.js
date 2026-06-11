@@ -63,11 +63,18 @@ async function loadQbVisuals() {
   renderChart("#hours-by-jobcode", "bar", data.hours_by_jobcode || [], "jobcode", "hours", "Hours");
   renderChart("#hours-by-service-item", "bar", data.hours_by_service_item || [], "service_item", "hours", "Hours");
   renderChart("#hours-over-time", "line", data.hours_by_day || [], "date", "hours", "Hours");
-  setText("#qb-filter-summary", `${formatNumber(data.filtered_timesheets)} timesheets, ${formatNumber(data.filtered_hours)} hours`);
+  setText("#metric-hours", formatNumber(data.filtered_hours));
+  setText("#metric-timesheets", formatNumber(data.filtered_timesheets));
+  setText("#metric-employees", formatNumber(data.filtered_employees));
+  setText("#metric-services", formatNumber(data.filtered_service_items));
+  setText("#qb-filter-summary", `${formatNumber(data.filtered_timesheets)} timesheets, ${formatNumber(data.filtered_hours)} hours${dateRangeLabel(data)}`);
+  renderEmployeeExperience(data.employee_experience || []);
+  renderExperienceDetail(data.experience_rows || []);
 }
 
 function qbFilterPayload() {
   return {
+    keyword_filter: $("#filter-keyword")?.value.trim() || null,
     employee_filter: $("#filter-employee")?.value || null,
     start_date: $("#filter-start")?.value || null,
     end_date: $("#filter-end")?.value || null,
@@ -121,6 +128,7 @@ function renderChart(selector, type, rows, labelKey, valueKey, label) {
   charts.get(selector)?.destroy();
   const context = canvas.getContext("2d");
   const dataRows = rows.length ? rows : [{ [labelKey]: "No data", [valueKey]: 0 }];
+  const isBar = type === "bar";
   charts.set(selector, new Chart(context, {
     type,
     data: {
@@ -136,15 +144,49 @@ function renderChart(selector, type, rows, labelKey, valueKey, label) {
       }],
     },
     options: {
+      indexAxis: isBar ? "y" : "x",
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => items.map((item) => item.label).join(", "),
+          },
+        },
+      },
       scales: {
-        x: { ticks: { maxRotation: 0, autoSkip: true, color: "#475467" }, grid: { display: false } },
-        y: { beginAtZero: true, ticks: { color: "#475467" }, grid: { color: "#eef2f7" } },
+        x: { beginAtZero: isBar, ticks: { maxRotation: 0, autoSkip: true, color: "#475467", callback: isBar ? numberTick : shortTick }, grid: { display: false } },
+        y: { beginAtZero: !isBar, ticks: { color: "#475467", callback: isBar ? shortTick : numberTick }, grid: { color: "#eef2f7" } },
       },
     },
   }));
+}
+
+function renderEmployeeExperience(rows) {
+  setText("#employee-experience-summary", rows.length ? `${formatNumber(rows.length)} matching employees` : "No matching employees");
+  renderRows($("#employee-experience-body"), rows, [
+    (r) => escapeHtml(r.employee),
+    (r) => formatNumber(r.hours),
+    (r) => formatNumber(r.timesheets),
+    (r) => formatNumber(r.jobcodes),
+    (r) => formatNumber(r.service_items),
+    (r) => formatDate(r.first_work),
+    (r) => formatDate(r.last_work),
+  ]);
+}
+
+function renderExperienceDetail(rows) {
+  setText("#experience-detail-summary", rows.length ? `${formatNumber(rows.length)} employee, job, and service combinations` : "No matching experience rows");
+  renderRows($("#experience-detail-body"), rows, [
+    (r) => escapeHtml(r.employee),
+    (r) => escapeHtml(r.jobcode_level1 || "-"),
+    (r) => escapeHtml(r.jobcode_level2 || "-"),
+    (r) => escapeHtml(r.jobcode_level3 || r.jobcode || "-"),
+    (r) => escapeHtml(r.service_item || "No service item"),
+    (r) => formatNumber(r.hours),
+    (r) => `${formatDate(r.first_work)} - ${formatDate(r.last_work)}`,
+  ]);
 }
 
 function renderRecentUploads(rows) {
@@ -179,5 +221,23 @@ function renderRecentLogs(rows) {
 }
 
 function formatNumber(value) {
+  return Number(value || 0).toLocaleString();
+}
+
+function formatDate(value) {
+  return value ? new Date(`${value}T00:00:00`).toLocaleDateString() : "-";
+}
+
+function dateRangeLabel(data) {
+  if (!data.date_start && !data.date_end) return "";
+  return ` from ${formatDate(data.date_start)} to ${formatDate(data.date_end)}`;
+}
+
+function shortTick(value) {
+  const label = this.getLabelForValue ? this.getLabelForValue(value) : String(value);
+  return label.length > 28 ? `${label.slice(0, 25)}...` : label;
+}
+
+function numberTick(value) {
   return Number(value || 0).toLocaleString();
 }

@@ -145,8 +145,10 @@ p { color: var(--muted); margin: 0 0 14px; }
 .metric strong { display: block; font-size: 30px; letter-spacing: 0; }
 .metric span { color: var(--muted); }
 .chart-panel { min-height: 340px; }
+.chart-panel.tall-chart { min-height: 430px; }
 .chart-panel h2 { color: #1d2939; }
 .chart-panel canvas { width: 100% !important; height: 260px !important; }
+.chart-panel.tall-chart canvas { height: 350px !important; }
 
 form, .toolbar { display: grid; gap: 12px; }
 .toolbar { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
@@ -237,6 +239,19 @@ tbody tr.is-editing {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 td pre { margin: 0; white-space: pre-wrap; font-size: 12px; }
+.experience-table th,
+.experience-table td {
+  white-space: nowrap;
+}
+.experience-table td:first-child,
+.experience-table td:nth-child(2),
+.experience-table td:nth-child(3),
+.experience-table td:nth-child(4),
+.experience-table td:nth-child(5) {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .status {
   display: inline-flex;

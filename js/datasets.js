@@ -124,46 +124,55 @@ async function uploadData(event) {
   const button = event.submitter || event.target.querySelector("button");
   const progress = startProgress("Preparing import...", { indeterminate: false });
   setButtonBusy(button, true, "Importing...");
-  const file = $("#data-file").files[0];
-  const datasetId = $("#upload-dataset").value;
-  if (!file || !datasetId) {
-    setButtonBusy(button, false);
-    return stopProgress(progress, "Choose a dataset and a CSV or Excel file.", "error");
-  }
-
-  updateProgress(progress, "Parsing file...", 10);
-  const rows = await parseFile(file);
-  if (!rows.length) {
-    setButtonBusy(button, false);
-    return stopProgress(progress, "No records found in the file.", "error");
-  }
-
-  updateProgress(progress, `Hashing ${rows.length.toLocaleString()} records...`, 30);
-  const headerSignature = Object.keys(rows[0]).sort().join("|");
-  const records = await Promise.all(rows.map(async (row) => ({
-    dataset_id: datasetId,
-    json_data: row,
-    source_hash: await sha256(JSON.stringify(row)),
-  })));
-
-  for (let i = 0; i < records.length; i += 1000) {
-    const batch = records.slice(i, i + 1000);
-    updateProgress(progress, `Uploading ${Math.min(i + batch.length, records.length).toLocaleString()} of ${records.length.toLocaleString()} records...`, 35 + Math.round((i / records.length) * 55));
-    const { error } = await supabase.from("records").upsert(batch, { onConflict: "dataset_id,source_hash" });
-    if (error) {
+  try {
+    const file = $("#data-file").files[0];
+    const datasetId = $("#upload-dataset").value;
+    if (!file || !datasetId) {
       setButtonBusy(button, false);
-      return stopProgress(progress, error.message, "error");
+      return stopProgress(progress, "Choose a dataset and a CSV or Excel file.", "error");
     }
-  }
 
-  updateProgress(progress, "Finalizing dataset...", 95);
-  await supabase.from("datasets").update({ header_signature: headerSignature, record_count: records.length }).eq("id", datasetId);
-  await supabase.rpc("log_activity", { action_name: "dataset.uploaded", details_json: { dataset_id: datasetId, rows: records.length } });
-  setButtonBusy(button, false);
-  stopProgress(progress, `Imported ${records.length.toLocaleString()} records.`, "success");
-  event.target.reset();
-  loadDatasetOptions();
-  loadDatasets();
+    updateProgress(progress, "Parsing file...", 10);
+    const rows = await parseFile(file);
+    if (!rows.length) {
+      setButtonBusy(button, false);
+      return stopProgress(progress, "No records found in the file.", "error");
+    }
+
+    updateProgress(progress, `Hashing ${rows.length.toLocaleString()} records...`, 30);
+    const headerSignature = Object.keys(rows[0]).sort().join("|");
+    const dedupedRecords = new Map();
+    for (const row of rows) {
+      const sourceHash = await sha256(JSON.stringify(row));
+      dedupedRecords.set(sourceHash, {
+        dataset_id: datasetId,
+        json_data: row,
+        source_hash: sourceHash,
+      });
+    }
+    const records = Array.from(dedupedRecords.values());
+    const skippedDuplicates = rows.length - records.length;
+
+    updateProgress(progress, skippedDuplicates ? `Uploading ${records.length.toLocaleString()} unique records (${skippedDuplicates.toLocaleString()} duplicates skipped)...` : `Uploading ${records.length.toLocaleString()} records...`, 35);
+    for (let i = 0; i < records.length; i += 1000) {
+      const batch = records.slice(i, i + 1000);
+      updateProgress(progress, `Uploading ${Math.min(i + batch.length, records.length).toLocaleString()} of ${records.length.toLocaleString()} unique records...`, 35 + Math.round((i / records.length) * 55));
+      const { error } = await supabase.from("records").upsert(batch, { onConflict: "dataset_id,source_hash" });
+      if (error) return stopProgress(progress, error.message, "error");
+    }
+
+    updateProgress(progress, "Finalizing dataset...", 95);
+    await supabase.from("datasets").update({ header_signature: headerSignature, record_count: records.length }).eq("id", datasetId);
+    await supabase.rpc("log_activity", { action_name: "dataset.uploaded", details_json: { dataset_id: datasetId, rows: records.length, duplicates_skipped: skippedDuplicates } });
+    stopProgress(progress, skippedDuplicates ? `Imported ${records.length.toLocaleString()} unique records. Skipped ${skippedDuplicates.toLocaleString()} duplicate rows.` : `Imported ${records.length.toLocaleString()} records.`, "success");
+    event.target.reset();
+    loadDatasetOptions();
+    loadDatasets();
+  } catch (error) {
+    stopProgress(progress, error.message, "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
 }
 
 async function parseFile(file) {
