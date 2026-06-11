@@ -151,9 +151,7 @@ async function runSync(supabase: ReturnType<typeof serviceClient>) {
 
     for (const resource of resources) {
       try {
-        const rows = await fetchAll(resource.endpoint, accessToken, Boolean(resource.useDateRange));
-        stats[resource.dataset] = rows.length;
-        await upsertResourceDataset(supabase, resource.dataset, rows);
+        stats[resource.dataset] = await syncResourceDataset(supabase, resource, accessToken);
       } catch (error) {
         errors.push({ dataset: resource.dataset, message: error.message || "Sync failed" });
       }
@@ -230,6 +228,83 @@ async function fetchAll(resource: string, accessToken: string, useDateRange = fa
   return rows;
 }
 
+async function syncResourceDataset(
+  supabase: ReturnType<typeof serviceClient>,
+  resource: { endpoint: string; dataset: string; useDateRange?: boolean },
+  accessToken: string,
+) {
+  const base = Deno.env.get("QB_TIME_API_URL") || "https://rest.tsheets.com/api/v1";
+  const perPage = Number(Deno.env.get("QB_TIME_PAGE_SIZE") || "200");
+  const maxPages = Number(Deno.env.get("QB_TIME_MAX_PAGES") || "250");
+  const pagesPerRun = resource.useDateRange ? Number(Deno.env.get("QB_TIME_PAGES_PER_RUN") || "15") : maxPages;
+  const name = `QuickBooks Time ${resource.dataset}`;
+  const { data: existing } = await supabase.from("datasets").select("id,record_count").eq("name", name).maybeSingle();
+  const { data: dataset, error: datasetError } = existing
+    ? await supabase.from("datasets").update({
+      description: `Synchronized ${resource.dataset} from QuickBooks Time`,
+      source_type: "quickbooks_time",
+    }).eq("id", existing.id).select("id,record_count").single()
+    : await supabase.from("datasets").insert({
+      name,
+      description: `Synchronized ${resource.dataset} from QuickBooks Time`,
+      source_type: "quickbooks_time",
+      record_count: 0,
+    }).select("id,record_count").single();
+  if (datasetError) throw datasetError;
+
+  const savedCount = resource.useDateRange ? Number(dataset.record_count || 0) : 0;
+  let page = Math.floor(savedCount / perPage) + 1;
+  let total = savedCount;
+  let pagesProcessed = 0;
+  let moreAvailable = false;
+  let reachedPageCap = false;
+
+  while (page <= maxPages && pagesProcessed < pagesPerRun) {
+    const url = new URL(`${base}/${resource.endpoint}`);
+    url.searchParams.set("per_page", String(perPage));
+    url.searchParams.set("page", String(page));
+    if (resource.useDateRange) {
+      const configuredStart = Deno.env.get("QB_TIME_SYNC_START_DATE");
+      const configuredEnd = Deno.env.get("QB_TIME_SYNC_END_DATE");
+      const end = configuredEnd ? new Date(`${configuredEnd}T00:00:00Z`) : new Date();
+      const start = configuredStart ? new Date(`${configuredStart}T00:00:00Z`) : new Date(Date.UTC(end.getUTCFullYear() - 2, end.getUTCMonth(), end.getUTCDate()));
+      url.searchParams.set("start_date", start.toISOString().slice(0, 10));
+      url.searchParams.set("end_date", end.toISOString().slice(0, 10));
+    }
+
+    const pageRows = await fetchPageRows(url, accessToken, resource.endpoint);
+    if (!pageRows.rows.length) break;
+    await upsertDatasetRows(supabase, dataset.id, pageRows.rows);
+    total += pageRows.rows.length;
+    pagesProcessed += 1;
+    await supabase.from("datasets").update({ record_count: total }).eq("id", dataset.id);
+    if (!pageRows.more) break;
+    moreAvailable = true;
+    if (page === maxPages) reachedPageCap = true;
+    page += 1;
+  }
+
+  if (reachedPageCap) {
+    console.warn(`QuickBooks Time ${resource.endpoint} reached page cap ${maxPages}; increase QB_TIME_MAX_PAGES for a deeper sync.`);
+  }
+  if (moreAvailable && pagesProcessed >= pagesPerRun) {
+    console.warn(`QuickBooks Time ${resource.endpoint} paused after ${pagesProcessed} pages; run sync again to continue from ${total} rows.`);
+  }
+  return total;
+}
+
+async function fetchPageRows(url: URL, accessToken: string, resource: string) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  const response = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` }, signal: controller.signal })
+    .finally(() => clearTimeout(timeout));
+  if (!response.ok) throw new Error(await responseError(response, `QuickBooks Time ${resource} sync failed`));
+  const payload = await response.json();
+  const container = payload.results?.[resource] || payload.results || [];
+  const rows = Array.isArray(container) ? container : Object.values(container);
+  return { rows, more: Boolean(payload.more) };
+}
+
 async function upsertResourceDataset(supabase: ReturnType<typeof serviceClient>, resourceName: string, rows: unknown[]) {
   const name = `QuickBooks Time ${resourceName}`;
   const { data: dataset } = await supabase.from("datasets").upsert({
@@ -240,11 +315,16 @@ async function upsertResourceDataset(supabase: ReturnType<typeof serviceClient>,
   }, { onConflict: "name" }).select("id").single();
 
   if (!dataset || !rows.length) return;
+  await upsertDatasetRows(supabase, dataset.id, rows);
+}
+
+async function upsertDatasetRows(supabase: ReturnType<typeof serviceClient>, datasetId: string, rows: unknown[]) {
+  if (!rows.length) return;
   const recordMap = new Map<string, { dataset_id: string; json_data: unknown; source_hash: string }>();
   for (const row of rows) {
     const sourceHash = await digest(JSON.stringify(row));
     recordMap.set(sourceHash, {
-      dataset_id: dataset.id,
+      dataset_id: datasetId,
       json_data: row,
       source_hash: sourceHash,
     });
