@@ -32,6 +32,10 @@ Optional overrides:
 - `QB_TIME_AUTH_URL`
 - `QB_TIME_TOKEN_URL`
 - `QB_TIME_API_URL`
+- `QB_TIME_PAGE_SIZE` defaults to `200`
+- `QB_TIME_MAX_PAGES` defaults to `250` so large timesheet syncs do not stop after the first 2,000 rows
+- `QB_TIME_SYNC_START_DATE` in `YYYY-MM-DD` format for full historical backfills
+- `QB_TIME_SYNC_END_DATE` in `YYYY-MM-DD` format for bounded backfills
 
 ## Recommended Production Hardening
 

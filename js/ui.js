@@ -63,6 +63,7 @@ export function setButtonBusy(button, busy, label = "Working...") {
 }
 
 export function renderRows(tbody, rows, columns) {
+  if (!tbody) return;
   tbody.innerHTML = "";
   if (!rows?.length) {
     const tr = document.createElement("tr");

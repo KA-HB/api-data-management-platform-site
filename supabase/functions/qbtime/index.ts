@@ -194,7 +194,7 @@ async function fetchAll(resource: string, accessToken: string, useDateRange = fa
   const base = Deno.env.get("QB_TIME_API_URL") || "https://rest.tsheets.com/api/v1";
   const rows: unknown[] = [];
   const perPage = Number(Deno.env.get("QB_TIME_PAGE_SIZE") || "200");
-  const maxPages = Number(Deno.env.get("QB_TIME_MAX_PAGES") || "10");
+  const maxPages = Number(Deno.env.get("QB_TIME_MAX_PAGES") || "250");
   let page = 1;
   let reachedPageCap = false;
 
@@ -203,9 +203,10 @@ async function fetchAll(resource: string, accessToken: string, useDateRange = fa
     url.searchParams.set("per_page", String(perPage));
     url.searchParams.set("page", String(page));
     if (useDateRange) {
-      const end = new Date();
-      const start = new Date();
-      start.setFullYear(start.getFullYear() - 1);
+      const configuredStart = Deno.env.get("QB_TIME_SYNC_START_DATE");
+      const configuredEnd = Deno.env.get("QB_TIME_SYNC_END_DATE");
+      const end = configuredEnd ? new Date(`${configuredEnd}T00:00:00Z`) : new Date();
+      const start = configuredStart ? new Date(`${configuredStart}T00:00:00Z`) : new Date(Date.UTC(end.getUTCFullYear() - 2, end.getUTCMonth(), end.getUTCDate()));
       url.searchParams.set("start_date", start.toISOString().slice(0, 10));
       url.searchParams.set("end_date", end.toISOString().slice(0, 10));
     }
@@ -239,11 +240,16 @@ async function upsertResourceDataset(supabase: ReturnType<typeof serviceClient>,
   }, { onConflict: "name" }).select("id").single();
 
   if (!dataset || !rows.length) return;
-  const records = await Promise.all(rows.map(async (row) => ({
-    dataset_id: dataset.id,
-    json_data: row,
-    source_hash: await digest(JSON.stringify(row)),
-  })));
+  const recordMap = new Map<string, { dataset_id: string; json_data: unknown; source_hash: string }>();
+  for (const row of rows) {
+    const sourceHash = await digest(JSON.stringify(row));
+    recordMap.set(sourceHash, {
+      dataset_id: dataset.id,
+      json_data: row,
+      source_hash: sourceHash,
+    });
+  }
+  const records = Array.from(recordMap.values());
   for (let i = 0; i < records.length; i += 1000) {
     await supabase.from("records").upsert(records.slice(i, i + 1000), { onConflict: "dataset_id,source_hash" });
   }

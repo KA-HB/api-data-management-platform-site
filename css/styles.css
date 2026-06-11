@@ -256,6 +256,22 @@ tbody tr.is-editing {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 td pre { margin: 0; white-space: pre-wrap; font-size: 12px; }
+.muted { color: var(--muted); }
+.field-list {
+  display: grid;
+  gap: 4px;
+}
+.field-list span {
+  display: block;
+}
+details {
+  margin-top: 8px;
+}
+summary {
+  color: var(--brand);
+  cursor: pointer;
+  font-weight: 700;
+}
 .experience-table th,
 .experience-table td {
   white-space: nowrap;

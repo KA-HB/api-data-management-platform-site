@@ -83,6 +83,8 @@ Available endpoints:
 
 Configure Client ID, Client Secret, and Redirect URI from the admin QuickBooks Time page. The sync module creates or updates datasets for employees, timesheets, job codes, customers, groups, and custom fields.
 
+For large historical timesheet imports, set `QB_TIME_MAX_PAGES` high enough for the expected row count. The default is `250` pages at `200` rows per page. Use `QB_TIME_SYNC_START_DATE` and `QB_TIME_SYNC_END_DATE` when you need a specific backfill window.
+
 For scheduled sync, create a Supabase scheduled function or external cron that calls `scheduled-sync` with `x-schedule-secret`.
 
 ## Security Notes
