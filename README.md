@@ -81,7 +81,7 @@ Available endpoints:
 
 ## QuickBooks Time
 
-Configure Client ID, Client Secret, and Redirect URI from the admin QuickBooks Time page. The sync module creates or updates datasets for employees, timesheets, PTO, job codes, customers, groups, and custom fields.
+Configure Client ID, Client Secret, and Redirect URI from the admin QuickBooks Time page. The sync module creates or updates datasets for employees, timesheets, job codes, customers, groups, and custom fields.
 
 For scheduled sync, create a Supabase scheduled function or external cron that calls `scheduled-sync` with `x-schedule-secret`.
 

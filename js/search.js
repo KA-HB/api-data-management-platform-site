@@ -23,7 +23,7 @@ if (profile) {
 }
 
 async function loadDatasetOptions() {
-  const { data, error } = await supabase.from("datasets").select("id,name").order("name");
+  const { data, error } = await supabase.from("datasets").select("id,name").neq("name", "QuickBooks Time PTO").order("name");
   if (error) return toast(error.message, "error");
   $("#dataset").innerHTML = `<option value="">All authorized datasets</option>${(data || []).map((d) => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join("")}`;
 }
@@ -46,7 +46,6 @@ async function runSearch(event = null) {
     employee_filter: $("#employee-filter").value.trim() || null,
     jobcode_filter: $("#jobcode-filter").value.trim() || null,
     status_filter: $("#status-filter").value.trim() || null,
-    pto_only: $("#pto-only").checked,
     customer_filter: $("#customer-filter").value.trim() || null,
     sort_field: $("#sort-field").value,
     sort_direction: $("#sort-direction").value,

@@ -4,17 +4,20 @@ import { $, escapeHtml, renderRows, setButtonBusy, startProgress, stopProgress, 
 
 const profile = await requireAuth();
 let editingDatasetId = null;
+let datasetsById = new Map();
 if (profile) {
   renderShell(profile);
   loadDatasets();
   $("#dataset-form")?.addEventListener("submit", saveDataset);
   $("#upload-form")?.addEventListener("submit", uploadData);
   $("#dataset-cancel-edit")?.addEventListener("click", cancelEdit);
+  $("#datasets-body")?.addEventListener("click", handleDatasetAction);
 }
 
 async function loadDatasets() {
-  const { data, error } = await supabase.from("datasets").select("*").order("created_at", { ascending: false });
+  const { data, error } = await supabase.from("datasets").select("*").neq("name", "QuickBooks Time PTO").order("created_at", { ascending: false });
   if (error) return toast(error.message, "error");
+  datasetsById = new Map((data || []).map((dataset) => [dataset.id, dataset]));
   const tbody = $("#datasets-body");
   if (!tbody) return;
   renderRows(tbody, data, [
@@ -22,26 +25,30 @@ async function loadDatasets() {
     (r) => escapeHtml(r.source_type),
     (r) => String(r.record_count || 0),
     (r) => escapeHtml(new Date(r.created_at).toLocaleDateString()),
-    (r) => profile.role === "admin" ? `<div class="form-actions"><button class="secondary" type="button" data-edit="${r.id}">Edit</button><button class="danger" type="button" data-delete="${r.id}">Delete</button></div>` : `<a class="button secondary" href="./search.html">Open</a>`,
+    (r) => profile.role === "admin" ? `<div class="form-actions"><button class="secondary" type="button" data-action="edit-dataset" data-dataset-id="${r.id}">Edit</button><button class="danger" type="button" data-action="delete-dataset" data-dataset-id="${r.id}">Delete</button></div>` : `<a class="button secondary" href="./search.html">Open</a>`,
   ]);
-  tbody.onclick = (event) => {
-    const editButton = event.target.closest("[data-edit]");
-    if (editButton) {
-      editDataset(data.find((row) => row.id === editButton.dataset.edit));
-      return;
-    }
-    const deleteButton = event.target.closest("[data-delete]");
-    if (deleteButton) deleteDataset(deleteButton.dataset.delete);
-  };
+  markEditingRow();
+}
+
+function handleDatasetAction(event) {
+  const button = event.target.closest("[data-action][data-dataset-id]");
+  if (!button) return;
+  const { action, datasetId } = button.dataset;
+  if (action === "edit-dataset") {
+    editDataset(datasetsById.get(datasetId));
+    return;
+  }
+  if (action === "delete-dataset") deleteDataset(datasetId);
 }
 
 function editDataset(dataset) {
-  if (!dataset) return;
+  if (!dataset) return toast("That dataset is no longer available. Refreshing the list.", "error");
   editingDatasetId = dataset.id;
   $("#dataset-name").value = dataset.name || "";
   $("#dataset-description").value = dataset.description || "";
   $("#dataset-source").value = dataset.source_type || "upload";
   setEditMode(dataset);
+  markEditingRow();
   $("#dataset-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
   $("#dataset-name")?.focus();
 }
@@ -65,6 +72,7 @@ function cancelEdit() {
   editingDatasetId = null;
   $("#dataset-form")?.reset();
   setEditMode(null);
+  markEditingRow();
 }
 
 async function saveDataset(event) {
@@ -81,26 +89,34 @@ async function saveDataset(event) {
   const query = editingDatasetId
     ? supabase.from("datasets").update(payload).eq("id", editingDatasetId)
     : supabase.from("datasets").insert(payload);
-  const { error } = await query;
-  setButtonBusy(button, false);
-  if (error) return toast(error.message, "error");
-  event.target.reset();
-  editingDatasetId = null;
-  setEditMode(null);
-  toast(wasEditing ? "Dataset updated." : "Dataset created.", "success");
-  loadDatasetOptions();
-  loadDatasets();
+  try {
+    const { error } = await query;
+    if (error) return toast(error.message, "error");
+    event.target.reset();
+    editingDatasetId = null;
+    setEditMode(null);
+    toast(wasEditing ? "Dataset updated." : "Dataset created.", "success");
+    loadDatasetOptions();
+    loadDatasets();
+  } finally {
+    setButtonBusy(button, false);
+    $("#dataset-save-button").textContent = editingDatasetId ? "Save Changes" : "Create";
+  }
 }
 
 async function deleteDataset(id) {
-  const button = document.querySelector(`[data-delete="${id}"]`);
+  const button = document.querySelector(`[data-action="delete-dataset"][data-dataset-id="${id}"]`);
   setButtonBusy(button, true, "Deleting...");
-  const { error } = await supabase.from("datasets").delete().eq("id", id);
-  setButtonBusy(button, false);
-  if (error) return toast(error.message, "error");
-  toast("Dataset deleted.", "success");
-  loadDatasetOptions();
-  loadDatasets();
+  try {
+    const { error } = await supabase.from("datasets").delete().eq("id", id);
+    if (error) return toast(error.message, "error");
+    if (editingDatasetId === id) cancelEdit();
+    toast("Dataset deleted.", "success");
+    loadDatasetOptions();
+    loadDatasets();
+  } finally {
+    setButtonBusy(button, false);
+  }
 }
 
 async function uploadData(event) {
@@ -171,8 +187,15 @@ async function sha256(value) {
 async function loadDatasetOptions() {
   const select = $("#upload-dataset");
   if (!select) return;
-  const { data } = await supabase.from("datasets").select("id,name").order("name");
+  const { data } = await supabase.from("datasets").select("id,name").neq("name", "QuickBooks Time PTO").order("name");
   select.innerHTML = `<option value="">Choose dataset</option>${(data || []).map((d) => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join("")}`;
 }
 
 loadDatasetOptions();
+
+function markEditingRow() {
+  document.querySelectorAll("#datasets-body tr").forEach((row) => {
+    const rowId = row.querySelector("[data-dataset-id]")?.dataset.datasetId;
+    row.classList.toggle("is-editing", Boolean(editingDatasetId && rowId === editingDatasetId));
+  });
+}

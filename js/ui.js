@@ -12,17 +12,17 @@ export function setText(selector, value) {
 }
 
 export function toast(message, type = "info") {
-  const existing = document.querySelector(".notice");
+  const existing = document.querySelector(".notice.toast, .notice.loading");
   if (existing) existing.remove();
   const el = document.createElement("div");
-  el.className = `notice ${type}`;
+  el.className = `notice ${type} toast`;
   el.textContent = message;
   document.querySelector(".content, .login-card, body").prepend(el);
   setTimeout(() => el.remove(), 7000);
 }
 
 export function startProgress(message, { indeterminate = true } = {}) {
-  const existing = document.querySelector(".notice");
+  const existing = document.querySelector(".notice.toast, .notice.loading");
   if (existing) existing.remove();
   const el = document.createElement("div");
   el.className = "notice loading";

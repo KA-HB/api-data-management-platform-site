@@ -57,6 +57,8 @@ async function revokeKey(id) {
   const payload = await response.json();
   setButtonBusy(button, false);
   if (!response.ok) return toast(payload.error, "error");
+  $("#raw-key").textContent = "";
+  $("#raw-key-wrap").classList.add("hidden");
   toast("API key revoked.");
   loadKeys();
 }
