@@ -30,14 +30,26 @@ Deno.serve(async (req) => {
   if (req.method === "PATCH") {
     if (!body.id) return jsonResponse({ error: "Missing user id" }, 400);
     const updates: Record<string, unknown> = {};
+    let passwordUpdated = false;
     if (typeof body.active === "boolean") {
       updates.active = body.active;
       await service.auth.admin.updateUserById(body.id, { ban_duration: body.active ? "none" : "876000h" });
     }
     if (body.role) updates.role = body.role;
-    const { error } = await service.from("profiles").update(updates).eq("id", body.id);
-    if (error) return jsonResponse({ error: error.message }, 400);
-    await userSupabase.rpc("log_activity", { action_name: "user.updated", details_json: { user_id: body.id, updates } });
+    if (typeof body.password === "string" && body.password.length) {
+      if (body.password.length < 8) return jsonResponse({ error: "Password must be at least 8 characters." }, 400);
+      const { error } = await service.auth.admin.updateUserById(body.id, { password: body.password });
+      if (error) return jsonResponse({ error: error.message }, 400);
+      passwordUpdated = true;
+    }
+    if (Object.keys(updates).length) {
+      const { error } = await service.from("profiles").update(updates).eq("id", body.id);
+      if (error) return jsonResponse({ error: error.message }, 400);
+      await userSupabase.rpc("log_activity", { action_name: "user.updated", details_json: { user_id: body.id, updates } });
+    }
+    if (passwordUpdated) {
+      await userSupabase.rpc("log_activity", { action_name: "user.password_updated", details_json: { user_id: body.id } });
+    }
     return jsonResponse({ ok: true });
   }
 

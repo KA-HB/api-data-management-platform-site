@@ -228,6 +228,23 @@ button.danger { background: var(--danger); }
 button.danger:hover { background: #912018; }
 button:disabled { opacity: .6; cursor: wait; }
 .form-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.user-actions {
+  display: grid;
+  gap: 10px;
+  min-width: 280px;
+}
+.inline-password {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+.inline-password input,
+.inline-password button {
+  min-height: 36px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
 
 .table-wrap { overflow: auto; box-shadow: none; }
 table { width: 100%; border-collapse: collapse; min-width: 720px; }
@@ -329,4 +346,5 @@ button.is-busy::before {
   .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }
   .content { padding: 18px; }
   .topbar { display: grid; }
+  .inline-password { grid-template-columns: 1fr; }
 }
