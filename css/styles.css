@@ -441,7 +441,8 @@ summary {
 .anomaly-table td:nth-child(8),
 .anomaly-table td:nth-child(9),
 .anomaly-table td:nth-child(10),
-.anomaly-table td:nth-child(11) {
+.anomaly-table td:nth-child(11),
+.anomaly-table td:nth-child(12) {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }

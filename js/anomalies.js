@@ -26,6 +26,8 @@ function bindEvents() {
   $("#filter-service-item")?.addEventListener("change", rerunIfReady);
   $("#filter-min-hours")?.addEventListener("change", rerunIfReady);
   $("#filter-min-timesheets")?.addEventListener("change", rerunIfReady);
+  $("#filter-max-share")?.addEventListener("change", rerunIfReady);
+  $("#filter-max-timesheets")?.addEventListener("change", rerunIfReady);
   $("#filter-limit")?.addEventListener("change", rerunIfReady);
   $("#filter-keyword")?.addEventListener("input", debounce(rerunIfReady, 350));
   $("#filter-jobcode-1")?.addEventListener("change", () => {
@@ -56,8 +58,8 @@ async function loadFilterOptions() {
 async function runDetection(event = null) {
   event?.preventDefault();
   const button = event?.submitter || $("#run-anomaly-detection");
-  const progress = startProgress("Analyzing job and service item patterns...");
-  setButtonBusy(button, true, "Analyzing...");
+  const progress = startProgress("Finding rare employee job and service item combinations...");
+  setButtonBusy(button, true, "Finding...");
   const { data, error } = await supabase.rpc("qbtime_anomaly_detection", filterPayload());
   setButtonBusy(button, false);
   if (error) return stopProgress(progress, error.message, "error");
@@ -77,9 +79,11 @@ function filterPayload() {
     jobcode_level3_filter: $("#filter-jobcode-3")?.value || null,
     service_item_filter: $("#filter-service-item")?.value || null,
     dataset_uuid_filter: $("#filter-dataset")?.value || null,
-    min_hours: numberValue("#filter-min-hours", 2),
+    min_hours: numberValue("#filter-min-hours", 0.25),
     min_timesheets: numberValue("#filter-min-timesheets", 1),
     limit_count: numberValue("#filter-limit", 100),
+    max_employee_share: numberValue("#filter-max-share", 5) / 100,
+    max_timesheets: numberValue("#filter-max-timesheets", 3),
   };
 }
 
@@ -91,7 +95,7 @@ function renderAnomalies(data) {
   setText("#metric-employees", formatNumber(summary.employees_with_anomalies));
   setText("#metric-combos", formatNumber(summary.combos_analyzed));
   setText("#anomaly-filter-summary", `${formatNumber(summary.filtered_timesheets)} timesheets, ${formatNumber(summary.filtered_hours)} hours${dateRangeLabel(summary)}`);
-  setText("#anomaly-results-summary", lastAnomalies.length ? `${formatNumber(lastAnomalies.length)} highest-priority flags shown.` : "No anomalies matched these filters.");
+  setText("#anomaly-results-summary", lastAnomalies.length ? `${formatNumber(lastAnomalies.length)} rare combinations shown.` : "No rare combinations matched these filters.");
 
   renderChart("#anomalies-by-employee", "bar", data.by_employee || [], "employee", "anomalies", "Flags");
   renderChart("#anomalies-by-reason", "bar", data.by_reason || [], "reason", "count", "Flags");
@@ -106,7 +110,8 @@ function renderAnomalies(data) {
     (r) => escapeHtml(r.jobcode_level3 || r.jobcode || "-"),
     (r) => escapeHtml(r.service_item || "No service item"),
     (r) => formatNumber(r.hours),
-    (r) => formatNumber(r.peer_avg_hours),
+    (r) => formatNumber(r.timesheets),
+    (r) => `${formatNumber(r.employee_hour_share)}%`,
     (r) => formatNumber(r.peer_employee_count),
     (r) => formatNumber(r.anomaly_score),
     (r) => `${formatDate(r.first_work)} - ${formatDate(r.last_work)}`,
@@ -195,11 +200,12 @@ function resetResults() {
   setText("#metric-high", "-");
   setText("#metric-employees", "-");
   setText("#metric-combos", "-");
-  setText("#anomaly-filter-summary", "Choose filters, then run detection.");
+  setText("#anomaly-filter-summary", "Choose filters, then run rare-combination detection.");
   setText("#anomaly-results-summary", "Run detection to load results.");
   charts.forEach((chart) => chart.destroy());
   charts.clear();
   renderRows($("#anomaly-results-body"), [], [
+    () => "",
     () => "",
     () => "",
     () => "",
@@ -217,7 +223,7 @@ function resetResults() {
 
 function exportCsv() {
   if (!lastAnomalies.length) return toast("Run anomaly detection before exporting.", "error");
-  const headers = ["priority", "employee", "reason", "jobcode_level1", "jobcode_level2", "jobcode_level3", "service_item", "hours", "peer_avg_hours", "peer_employee_count", "anomaly_score", "first_work", "last_work"];
+  const headers = ["severity", "employee", "reason", "jobcode_level1", "jobcode_level2", "jobcode_level3", "service_item", "hours", "timesheets", "employee_hour_share", "employee_timesheet_share", "peer_employee_count", "anomaly_score", "first_work", "last_work"];
   const lines = [headers.join(",")].concat(lastAnomalies.map((row) => headers.map((header) => csvCell(row[header])).join(",")));
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
