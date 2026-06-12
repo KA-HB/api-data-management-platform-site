@@ -94,15 +94,24 @@ export function initTheme() {
   const theme = saved || (preferredDark ? "dark" : "light");
   setTheme(theme);
   document.querySelectorAll("[data-theme-toggle]").forEach((button) => {
-    button.textContent = document.documentElement.dataset.theme === "dark" ? "Light mode" : "Dark mode";
+    updateThemeToggle(button);
+    if (button.dataset.themeBound === "true") return;
+    button.dataset.themeBound = "true";
     button.addEventListener("click", () => {
       const nextTheme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
       setTheme(nextTheme);
-      document.querySelectorAll("[data-theme-toggle]").forEach((toggle) => {
-        toggle.textContent = nextTheme === "dark" ? "Light mode" : "Dark mode";
-      });
+      document.querySelectorAll("[data-theme-toggle]").forEach(updateThemeToggle);
     });
   });
+}
+
+function updateThemeToggle(button) {
+  const isDark = document.documentElement.dataset.theme === "dark";
+  const label = isDark ? "Switch to light mode" : "Switch to dark mode";
+  button.classList.add("theme-toggle");
+  button.innerHTML = `<span aria-hidden="true">${isDark ? "☀" : "☾"}</span>`;
+  button.setAttribute("aria-label", label);
+  button.title = label;
 }
 
 function setTheme(theme) {
