@@ -328,9 +328,9 @@ function jobPath(data) {
 }
 
 function employeeName(data) {
-  const direct = fieldValue(data, ["employee_name", "display_name", "full_name", "name"]);
-  const firstLast = [fieldValue(data, ["first_name", "fname"]), fieldValue(data, ["last_name", "lname"])].filter(Boolean).join(" ");
-  return direct || firstLast || fieldValue(data, ["username", "email", "user_id"]);
+  const direct = cleanDisplayName(fieldValue(data, ["employee_name", "display_name", "full_name", "name"]));
+  const firstLast = cleanDisplayName([fieldValue(data, ["first_name", "fname"]), fieldValue(data, ["last_name", "lname"])].filter(Boolean).join(" "));
+  return direct || firstLast || cleanDisplayName(fieldValue(data, ["username", "email"]));
 }
 
 function serviceItem(data) {
@@ -352,6 +352,12 @@ function fieldValue(data, keys) {
     if (value !== undefined && value !== null && String(value).trim() !== "") return value;
   }
   return "";
+}
+
+function cleanDisplayName(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized || normalized === "Unassigned" || /^[0-9]+$/.test(normalized)) return "";
+  return normalized;
 }
 
 function uniqueValues(values) {

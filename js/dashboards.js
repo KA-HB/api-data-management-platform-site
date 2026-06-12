@@ -392,8 +392,8 @@ function renderExperienceDetail(rows) {
 }
 
 function normalizeExperienceRollup(data = {}) {
-  const employeeRows = data.employee_experience || data.hours_by_employee || [];
-  const detailRows = data.experience_rows || [];
+  const employeeRows = (data.employee_experience || data.hours_by_employee || []).filter(hasNamedEmployee);
+  const detailRows = (data.experience_rows || []).filter(hasNamedEmployee);
   const serviceRows = data.hours_by_service_item || [];
   const jobRows = data.hours_by_jobcode || [];
   const dayRows = data.hours_by_day || [];
@@ -403,7 +403,7 @@ function normalizeExperienceRollup(data = {}) {
     ...data,
     employee_experience: employeeRows,
     experience_rows: detailRows,
-    hours_by_employee: data.hours_by_employee || employeeRows,
+    hours_by_employee: employeeRows,
     hours_by_jobcode: jobRows,
     hours_by_service_item: serviceRows,
     hours_by_day: dayRows,
@@ -418,6 +418,11 @@ function normalizeExperienceRollup(data = {}) {
     filtered_service_items: numeric(data.filtered_service_items ?? serviceNames.length),
     filtered_timesheets: numeric(data.filtered_timesheets ?? sumValues(employeeRows, "timesheets") ?? detailRows.length),
   };
+}
+
+function hasNamedEmployee(row) {
+  const employee = String(row?.employee || "").trim();
+  return Boolean(employee && employee !== "Unassigned" && !/^[0-9]+$/.test(employee));
 }
 
 function renderRecentUploads(rows) {
