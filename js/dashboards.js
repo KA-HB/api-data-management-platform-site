@@ -23,8 +23,20 @@ if (profile) {
       updateDatasetIndicator();
       loadQbVisuals();
     });
-    $("#filter-jobcode-1")?.addEventListener("change", refreshDependentJobFilters);
-    $("#filter-jobcode-2")?.addEventListener("change", refreshDependentJobFilters);
+    $("#filter-employee")?.addEventListener("change", loadQbVisuals);
+    $("#filter-start")?.addEventListener("change", loadQbVisuals);
+    $("#filter-end")?.addEventListener("change", loadQbVisuals);
+    $("#filter-service-item")?.addEventListener("change", loadQbVisuals);
+    $("#filter-jobcode-1")?.addEventListener("change", () => {
+      refreshDependentJobFilters();
+      loadQbVisuals();
+    });
+    $("#filter-jobcode-2")?.addEventListener("change", () => {
+      refreshDependentJobFilters();
+      loadQbVisuals();
+    });
+    $("#filter-jobcode-3")?.addEventListener("change", loadQbVisuals);
+    $("#filter-keyword")?.addEventListener("input", debounce(loadQbVisuals, 350));
   }
 }
 
@@ -301,6 +313,7 @@ function refreshDependentJobFilters() {
   if (!qbFilterOptions) return;
   const selectedLevel1 = $("#filter-jobcode-1")?.value || "";
   const selectedLevel2 = $("#filter-jobcode-2")?.value || "";
+  const selectedLevel3 = $("#filter-jobcode-3")?.value || "";
   const level2 = (qbFilterOptions.jobcode_level2 || []).filter((row) => !selectedLevel1 || row.parent_id === selectedLevel1);
   fillSelect("#filter-jobcode-2", level2, "All Job Code 2");
   if (selectedLevel2 && level2.some((row) => row.id === selectedLevel2)) $("#filter-jobcode-2").value = selectedLevel2;
@@ -312,6 +325,7 @@ function refreshDependentJobFilters() {
     return true;
   });
   fillSelect("#filter-jobcode-3", level3, "All Job Code 3");
+  if (selectedLevel3 && level3.some((row) => row.id === selectedLevel3)) $("#filter-jobcode-3").value = selectedLevel3;
 }
 
 function fillSelect(selector, rows, placeholder) {
@@ -517,6 +531,14 @@ function chartPalette() {
 
 function isSchemaCacheError(error) {
   return /schema cache|could not find the function/i.test(error?.message || "");
+}
+
+function debounce(fn, delay) {
+  let timeout;
+  return function (...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => fn.apply(this, args), delay);
+  };
 }
 
 function scopeSummary(data) {
