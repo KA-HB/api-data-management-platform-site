@@ -163,6 +163,7 @@ async function uploadData(event) {
 
     updateProgress(progress, "Finalizing dataset...", 95);
     await supabase.from("datasets").update({ header_signature: headerSignature, record_count: records.length }).eq("id", datasetId);
+    await supabase.rpc("refresh_dashboard_experience_records");
     await supabase.rpc("log_activity", { action_name: "dataset.uploaded", details_json: { dataset_id: datasetId, rows: records.length, duplicates_skipped: skippedDuplicates } });
     stopProgress(progress, skippedDuplicates ? `Imported ${records.length.toLocaleString()} unique records. Skipped ${skippedDuplicates.toLocaleString()} duplicate rows.` : `Imported ${records.length.toLocaleString()} records.`, "success");
     event.target.reset();

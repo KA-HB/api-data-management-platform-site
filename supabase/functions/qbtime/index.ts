@@ -157,6 +157,7 @@ async function runSync(supabase: ReturnType<typeof serviceClient>) {
       }
     }
 
+    await supabase.rpc("refresh_dashboard_experience_records");
     await supabase.from("qbtime_settings").update({ last_sync: new Date().toISOString() }).eq("id", settings.id);
     const status = errors.length ? "partial" : "success";
     await supabase.from("sync_logs").update({

@@ -7,6 +7,8 @@ const profile = await requireAuth();
 const charts = new Map();
 let qbFilterOptions = null;
 let availableDatasets = [];
+let lastSummary = null;
+let lastGeneralCoverage = null;
 
 if (profile) {
   renderShell(profile);
@@ -53,16 +55,17 @@ async function loadDashboard() {
     ]);
 
     if (error) return stopProgress(progress, error.message, "error");
-    stopProgress(progress);
 
     if (qbOptions?.data) {
       qbFilterOptions = qbOptions.data;
       populateQbFilters(qbFilterOptions);
     }
 
-    const coverage = await callSearchSummary();
-    const fallbackCoverage = coverage.data ? null : buildFastCoverageSummary(summary);
-    renderGeneralDashboard(summary, coverage.data || fallbackCoverage);
+    lastSummary = summary;
+    const experience = await callQbRollups(emptyQbPayload());
+    lastGeneralCoverage = experience.data ? normalizeExperienceRollup(experience.data) : buildFastCoverageSummary(summary);
+    renderGeneralDashboard(summary, lastGeneralCoverage);
+    stopProgress(progress);
 
     if (profile.role === "admin" && $("#qb-viz-filters")) await loadQbVisuals();
 
@@ -79,9 +82,9 @@ function renderGeneralDashboard(summary, coverage) {
   setText("#metric-keys", formatNumber(summary?.api_keys));
   setText("#metric-raw-records", formatNumber(coverage?.raw_records ?? summary?.records));
   setText("#metric-records", formatNumber(coverage?.unique_records ?? summary?.records));
-  setText("#metric-hours", coverage?.hours === null ? "Pending" : formatNumber(coverage?.hours));
-  setText("#metric-employees", coverage?.employee_count === null ? "Pending" : formatNumber(coverage?.employee_count));
-  setText("#metric-services", coverage?.service_item_count === null ? "Pending" : formatNumber(coverage?.service_item_count));
+  setText("#metric-hours", formatNumber(coverage?.filtered_hours ?? coverage?.hours));
+  setText("#metric-employees", formatNumber(coverage?.filtered_employees ?? coverage?.employee_count));
+  setText("#metric-services", formatNumber(coverage?.filtered_service_items ?? coverage?.service_item_count));
   setText("#data-scope-summary", coverage ? scopeSummary(coverage) : `Showing ${formatNumber(summary?.records)} authorized records. Full-year hours, employees, service-item totals, and duplicate removal require the latest Supabase search migration.`);
 
   renderChart("#records-by-dataset", "bar", coverage?.records_by_dataset || summary?.records_by_dataset || [], "name", coverage ? "records" : "record_count", coverage ? "Unique Records" : "Records");
@@ -99,9 +102,12 @@ function buildFastCoverageSummary(summary) {
     unique_records: rawRecords || summary?.records || 0,
     duplicates_removed: null,
     dataset_count: nonPtoRows.length || summary?.datasets || 0,
-    employee_count: null,
-    service_item_count: null,
-    hours: null,
+    employee_count: 0,
+    service_item_count: 0,
+    hours: 0,
+    filtered_employees: 0,
+    filtered_service_items: 0,
+    filtered_hours: 0,
     records_by_dataset: nonPtoRows.map((row) => ({ name: row.name, records: numeric(row.record_count) })).sort((a, b) => b.records - a.records),
     records_by_day: summary?.records_by_day || [],
   };
@@ -124,7 +130,7 @@ async function loadQbVisuals() {
   }
 
   const progress = startProgress("Updating experience charts...");
-  const [experience, coverage] = await Promise.all([callQbRollups(payload), callSearchSummary()]);
+  const experience = await callQbRollups(payload);
   const { data, error } = experience;
   if (error) {
     clearQbVisuals();
@@ -137,17 +143,16 @@ async function loadQbVisuals() {
   renderChart("#hours-by-jobcode", "bar", normalized.hours_by_jobcode, "jobcode", "hours", "Hours");
   renderChart("#hours-by-service-item", "bar", normalized.hours_by_service_item, "service_item", "hours", "Hours");
   renderChart("#hours-over-time", "line", normalized.hours_by_day, "date", "hours", "Hours");
-  if (coverage.data) {
-    renderChart("#records-by-dataset", "bar", coverage.data.records_by_dataset || [], "name", "records", "Unique Records");
-    renderChart("#records-over-time", "line", coverage.data.records_by_day || [], "date", "records", "Unique Records");
-  }
+  renderChart("#records-by-dataset", "bar", normalized.records_by_dataset || [], "name", "records", "Unique Records");
+  renderChart("#records-over-time", "line", normalized.records_by_day || [], "date", "records", "Unique Records");
 
-  setText("#metric-records", formatNumber(coverage.data?.unique_records ?? normalized.filtered_timesheets));
+  setText("#metric-raw-records", formatNumber(normalized.raw_records ?? normalized.filtered_timesheets));
+  setText("#metric-records", formatNumber(normalized.unique_records ?? normalized.filtered_timesheets));
   setText("#metric-hours", formatNumber(normalized.filtered_hours));
   setText("#metric-employees", formatNumber(normalized.filtered_employees));
   setText("#metric-services", formatNumber(normalized.filtered_service_items));
   setText("#qb-filter-summary", `${formatNumber(normalized.filtered_timesheets)} experience records, ${formatNumber(normalized.filtered_hours)} hours${dateRangeLabel(normalized)}`);
-  setText("#data-scope-summary", coverage.data ? scopeSummary(coverage.data) : `Showing QuickBooks Time rollup totals from the currently deployed dashboard function. Select the uploaded full-year dataset after the latest Supabase migration is applied for full dataset-specific totals.`);
+  setText("#data-scope-summary", scopeSummary(normalized));
 
   renderEmployeeExperience(normalized.employee_experience);
   renderExperienceDetail(normalized.experience_rows);
@@ -183,6 +188,20 @@ async function callSearchSummary() {
   const result = await supabase.rpc("search_records_summary", searchSummaryPayload());
   if (!isSchemaCacheError(result.error)) return result;
   return { data: null, error: null };
+}
+
+function emptyQbPayload() {
+  return {
+    dataset_uuid: null,
+    keyword_filter: null,
+    employee_filter: null,
+    start_date: null,
+    end_date: null,
+    jobcode_level1_filter: null,
+    jobcode_level2_filter: null,
+    jobcode_level3_filter: null,
+    service_item_filter: null,
+  };
 }
 
 async function syncQuickBooksTime() {
@@ -310,6 +329,7 @@ function renderChart(selector, type, rows, labelKey, valueKey, label) {
   const context = canvas.getContext("2d");
   const dataRows = rows.length ? rows : [{ [labelKey]: "No data", [valueKey]: 0 }];
   const isBar = type === "bar";
+  const palette = chartPalette();
   charts.set(selector, new Chart(context, {
     type,
     data: {
@@ -317,8 +337,8 @@ function renderChart(selector, type, rows, labelKey, valueKey, label) {
       datasets: [{
         label,
         data: dataRows.map((row) => Number(row[valueKey] || 0)),
-        borderColor: "#2563eb",
-        backgroundColor: type === "line" ? "rgba(37, 99, 235, .16)" : ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#0891b2", "#7c3aed", "#475569"],
+        borderColor: palette.primary,
+        backgroundColor: type === "line" ? palette.fill : palette.series,
         borderWidth: 2,
         tension: 0.28,
         fill: type === "line",
@@ -338,8 +358,8 @@ function renderChart(selector, type, rows, labelKey, valueKey, label) {
         },
       },
       scales: {
-        x: { beginAtZero: isBar, ticks: { maxRotation: 0, autoSkip: true, color: "#475467", callback: isBar ? numberTick : shortTick }, grid: { display: false } },
-        y: { beginAtZero: !isBar, ticks: { color: "#475467", callback: isBar ? shortTick : numberTick }, grid: { color: "#eef2f7" } },
+        x: { beginAtZero: isBar, ticks: { maxRotation: 0, autoSkip: true, color: palette.tick, callback: isBar ? numberTick : shortTick }, grid: { display: false } },
+        y: { beginAtZero: !isBar, ticks: { color: palette.tick, callback: isBar ? shortTick : numberTick }, grid: { color: palette.grid } },
       },
     },
   }));
@@ -387,6 +407,12 @@ function normalizeExperienceRollup(data = {}) {
     hours_by_jobcode: jobRows,
     hours_by_service_item: serviceRows,
     hours_by_day: dayRows,
+    records_by_dataset: data.records_by_dataset || [],
+    records_by_day: data.records_by_day || [],
+    raw_records: numeric(data.raw_records ?? data.filtered_timesheets),
+    unique_records: numeric(data.unique_records ?? data.filtered_timesheets),
+    dataset_count: numeric(data.dataset_count),
+    duplicates_removed: numeric(data.duplicates_removed),
     filtered_hours: numeric(data.filtered_hours ?? firstPositive(sumValues(dayRows, "hours"), sumValues(employeeRows, "hours"), sumValues(detailRows, "hours"))),
     filtered_employees: numeric(data.filtered_employees ?? employeeNames.length),
     filtered_service_items: numeric(data.filtered_service_items ?? serviceNames.length),
@@ -471,13 +497,26 @@ function numberTick(value) {
   return Number(value || 0).toLocaleString();
 }
 
+function chartPalette() {
+  const isDark = document.documentElement.dataset.theme === "dark" || document.body.classList.contains("dark");
+  return {
+    primary: isDark ? "#60a5fa" : "#2563eb",
+    fill: isDark ? "rgba(96, 165, 250, .18)" : "rgba(37, 99, 235, .16)",
+    tick: isDark ? "#cbd5e1" : "#475467",
+    grid: isDark ? "rgba(148, 163, 184, .18)" : "#eef2f7",
+    series: isDark
+      ? ["#60a5fa", "#34d399", "#fbbf24", "#f87171", "#22d3ee", "#a78bfa", "#94a3b8"]
+      : ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#0891b2", "#7c3aed", "#475569"],
+  };
+}
+
 function isSchemaCacheError(error) {
   return /schema cache|could not find the function/i.test(error?.message || "");
 }
 
 function scopeSummary(data) {
   if (data.is_fast_fallback) {
-    return `Fast dashboard mode: showing ${formatNumber(data.unique_records)} records across ${formatNumber(data.dataset_count)} dataset${Number(data.dataset_count) === 1 ? "" : "s"} from dataset metadata. Precise deduped hours, employees, and service items require the latest Supabase search migration.`;
+    return `Showing ${formatNumber(data.unique_records)} records across ${formatNumber(data.dataset_count)} dataset${Number(data.dataset_count) === 1 ? "" : "s"} from dataset metadata. Experience totals will update after the dashboard rollup finishes refreshing.`;
   }
   const scope = data.dataset_name || "All authorized datasets";
   const duplicateText = Number(data.duplicates_removed || 0)
