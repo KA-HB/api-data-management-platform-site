@@ -4,6 +4,7 @@ import { $, escapeHtml, renderRows, setButtonBusy, setText, startProgress, stopP
 
 const profile = await requireAuth();
 let lastRows = [];
+let lastSummary = null;
 let page = 1;
 let total = 0;
 let charts = new Map();
@@ -11,17 +12,41 @@ let charts = new Map();
 if (profile) {
   renderShell(profile);
   await loadDatasetOptions();
-  await loadSearchSummary();
+  renderSearchSummary(null);
   $("#search-form")?.addEventListener("submit", runSearch);
-  $("#run-search")?.addEventListener("click", () => {
-    page = 1;
-    runSearch();
-  });
+  initSearchControls();
   $("#clear-search")?.addEventListener("click", clearSearch);
   $("#prev-page")?.addEventListener("click", () => changePage(-1));
   $("#next-page")?.addEventListener("click", () => changePage(1));
   $("#export-json")?.addEventListener("click", exportJson);
+  document.addEventListener("themechange", () => renderSearchSummary(lastSummary));
   updatePager();
+}
+
+function initSearchControls() {
+  $("#dataset")?.addEventListener("change", () => {
+    page = 1;
+    updateFilterStatus();
+    if (hasActiveScope()) loadSearchSummary();
+    else renderSearchSummary(null);
+  });
+  $("#page-size")?.addEventListener("change", () => {
+    page = 1;
+    updatePager();
+  });
+  $("#search-form")?.addEventListener("input", updateFilterStatus);
+  document.querySelectorAll("[data-quick-term], [data-quick-job], [data-quick-service], [data-quick-month]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.quickTerm) $("#term").value = button.dataset.quickTerm;
+      if (button.dataset.quickJob) $("#jobcode-filter").value = button.dataset.quickJob;
+      if (button.dataset.quickService) $("#service-item-filter").value = button.dataset.quickService;
+      if (button.dataset.quickMonth) setMonthRange(button.dataset.quickMonth);
+      page = 1;
+      updateFilterStatus();
+      runSearch();
+    });
+  });
+  updateFilterStatus();
 }
 
 async function loadDatasetOptions() {
@@ -33,11 +58,22 @@ async function loadDatasetOptions() {
 async function runSearch(event = null) {
   event?.preventDefault();
   page = event ? 1 : page;
+  const payload = searchPayload();
+  if (!hasActiveScope()) {
+    renderSearchSummary(null);
+    setText("#result-summary", "Choose a dataset or enter at least one filter before searching.");
+    toast("Choose a dataset, keyword, date range, employee, job, service item, or exact field first.", "info");
+    return;
+  }
+  if ((payload.exact_key && !payload.exact_value) || (!payload.exact_key && payload.exact_value)) {
+    toast("Exact match needs both a source field and an exact value.", "error");
+    return;
+  }
   const button = event?.submitter || $("#run-search");
   const progress = startProgress("Searching records...");
   setButtonBusy(button, true, "Searching...");
   const pageSize = pageSizeValue();
-  const basePayload = searchPayload();
+  const basePayload = payload;
   const [{ data, error }, summary] = await Promise.all([
     callSearchAdvanced(basePayload, pageSize, (page - 1) * pageSize),
     callSearchSummary(basePayload),
@@ -55,6 +91,7 @@ async function runSearch(event = null) {
   ]);
   updatePager();
   renderSearchSummary(summary.data);
+  updateFilterStatus();
   const summaryNote = summary.data ? "unique matching records" : "matching records";
   stopProgress(progress, `${total.toLocaleString()} ${summaryNote}.`, total ? "success" : "info");
 }
@@ -107,7 +144,8 @@ function clearSearch() {
   $("#records-body").innerHTML = "";
   setText("#result-summary", "Run a search to load records.");
   updatePager();
-  loadSearchSummary();
+  updateFilterStatus();
+  renderSearchSummary(null);
 }
 
 function changePage(direction) {
@@ -133,6 +171,57 @@ function pageSizeValue() {
   return Math.min(Math.max(Number($("#page-size").value || 50), 1), 250);
 }
 
+function hasActiveScope(payload = searchPayload()) {
+  return Boolean(
+    payload.dataset_uuid ||
+    payload.search_term ||
+    payload.exact_key ||
+    payload.exact_value ||
+    payload.start_date ||
+    payload.end_date ||
+    payload.user_filter ||
+    payload.employee_filter ||
+    payload.jobcode_filter ||
+    payload.service_item_filter ||
+    payload.status_filter ||
+    payload.customer_filter
+  );
+}
+
+function updateFilterStatus() {
+  const payload = searchPayload();
+  const active = [
+    payload.dataset_uuid ? datasetName() : "",
+    payload.search_term ? `keyword "${payload.search_term}"` : "",
+    payload.employee_filter ? `employee "${payload.employee_filter}"` : "",
+    payload.jobcode_filter ? `job "${payload.jobcode_filter}"` : "",
+    payload.service_item_filter ? `service "${payload.service_item_filter}"` : "",
+    payload.start_date || payload.end_date ? dateRangeLabel(payload.start_date, payload.end_date) : "",
+    payload.exact_key && payload.exact_value ? `${payload.exact_key} = ${payload.exact_value}` : "",
+  ].filter(Boolean);
+  setText("#search-filter-status", active.length ? `Active scope: ${active.join(" | ")}` : "Showing all authorized data until filters are applied.");
+}
+
+function datasetName() {
+  const option = $("#dataset")?.selectedOptions?.[0];
+  return option?.value ? option.textContent : "";
+}
+
+function dateRangeLabel(start, end) {
+  const from = start ? formatDateValue(start) : "earliest";
+  const to = end ? formatDateValue(end) : "latest";
+  return `${from} to ${to}`;
+}
+
+function setMonthRange(monthValue) {
+  const [year, month] = monthValue.split("-").map(Number);
+  if (!year || !month) return;
+  const start = new Date(Date.UTC(year, month - 1, 1));
+  const end = new Date(Date.UTC(year, month, 0));
+  $("#start-date").value = start.toISOString().slice(0, 10);
+  $("#end-date").value = end.toISOString().slice(0, 10);
+}
+
 function dateValue(selector, endOfDay = false) {
   const value = $(selector).value;
   if (!value) return null;
@@ -151,18 +240,23 @@ function exportJson() {
 }
 
 async function loadSearchSummary() {
+  if (!hasActiveScope()) {
+    renderSearchSummary(null);
+    return;
+  }
   const { data, error } = await callSearchSummary(searchPayload());
   if (error) return toast(error.message, "error");
   renderSearchSummary(data);
 }
 
 function renderSearchSummary(data = null) {
+  lastSummary = data;
   if (!data) {
     setText("#search-unique-records", "-");
     setText("#search-raw-records", "-");
     setText("#search-datasets", "-");
     setText("#search-hours", "-");
-    setText("#search-scope-summary", "Search visuals require the latest Supabase search migration. Record search still works with the current database functions.");
+    setText("#search-scope-summary", "Choose a dataset or apply a filter to load scoped search visuals.");
     renderChart("#search-records-by-dataset", "bar", [], "name", "records", "Unique Records");
     renderChart("#search-records-over-time", "line", [], "date", "records", "Unique Records");
     return;
@@ -178,13 +272,13 @@ function renderSearchSummary(data = null) {
 
 function renderRelevantFields(row) {
   const data = row.json_data || {};
-  const hours = data.hours !== undefined ? `${formatNumber(data.hours)} hrs` : data.duration ? `${roundHours(data.duration)} hrs` : "";
+  const hours = hoursLabel(data);
   const fields = [
-    ["Employee", data.employee_name || employeeName(data)],
-    ["Job/Project", jobPath(data) || data.name || data.jobcode_id || data.project_id],
-    ["Service", data.service_item || data.customfields?.["53105"] || data["service item"]],
+    ["Employee", employeeName(data)],
+    ["Job/Project", jobPath(data) || fieldValue(data, ["jobcode_name", "name", "short_code", "jobcode_id", "project_id", "project_name"])],
+    ["Service", serviceItem(data)],
     ["Hours", hours],
-    ["Status", data.state || data.status || activeLabel(data.active)],
+    ["Status", fieldValue(data, ["state", "status"]) || activeLabel(data.active)],
   ].filter(([, value]) => value !== undefined && value !== null && value !== "");
   return fields.length
     ? `<div class="field-list">${fields.map(([label, value]) => `<span><b>${escapeHtml(label)}:</b> ${escapeHtml(value)}</span>`).join("")}</div>`
@@ -193,24 +287,86 @@ function renderRelevantFields(row) {
 
 function renderRecordDetails(row) {
   const data = row.json_data || {};
-  const preview = data.notes || data.description || jobPath(data) || data.email || data.username || data.company_name || data.name || data.id || row.id;
+  const preview = fieldValue(data, ["notes", "description", "memo"]) || jobPath(data) || serviceItem(data) || employeeName(data) || fieldValue(data, ["company_name", "name", "id"]) || row.id;
   return `<div>${escapeHtml(preview)}</div><details><summary>Raw JSON</summary><pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre></details>`;
 }
 
 function recordDate(row) {
   const data = row.json_data || {};
-  const value = data.work_date || data.local_date || data.date || data.start || data.created || row.created_at;
-  return value ? new Date(String(value).slice(0, 10)).toLocaleDateString() : "-";
+  return formatDateValue(fieldValue(data, ["work_date", "local_date", "date", "start", "created"]) || row.created_at);
 }
 
 function jobPath(data) {
-  return [data.jobcode_level1 || data.jobcode_1, data.jobcode_level2 || data.jobcode_2, data.jobcode_level3 || data.jobcode_3 || data.jobcode_name]
-    .filter(Boolean)
+  return uniqueValues([
+    fieldValue(data, ["jobcode_level1", "jobcode_1", "parent_jobcode_name"]),
+    fieldValue(data, ["jobcode_level2", "jobcode_2"]),
+    fieldValue(data, ["jobcode_level3", "jobcode_3", "jobcode_name", "name"]),
+  ])
     .join(" / ");
 }
 
 function employeeName(data) {
-  return [data.first_name || data.fname, data.last_name || data.lname].filter(Boolean).join(" ") || data.display_name || data.username || data.email || data.user_id;
+  const direct = fieldValue(data, ["employee_name", "display_name", "full_name", "name"]);
+  const firstLast = [fieldValue(data, ["first_name", "fname"]), fieldValue(data, ["last_name", "lname"])].filter(Boolean).join(" ");
+  return direct || firstLast || fieldValue(data, ["username", "email", "user_id"]);
+}
+
+function serviceItem(data) {
+  return fieldValue(data, ["service_item", "service item", "service", "item", "item_name"]) || data.customfields?.["53105"];
+}
+
+function hoursLabel(data) {
+  const rawHours = fieldValue(data, ["hours", "hours_worked", "decimal_hours", "total_hours"]);
+  const numericHours = numericValue(rawHours);
+  if (Number.isFinite(numericHours)) return `${numericHours.toLocaleString(undefined, { maximumFractionDigits: 2 })} hrs`;
+  const duration = numericValue(fieldValue(data, ["duration", "time_seconds", "seconds"]));
+  if (Number.isFinite(duration)) return `${roundHours(duration)} hrs`;
+  return "";
+}
+
+function fieldValue(data, keys) {
+  for (const key of keys) {
+    const value = data?.[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") return value;
+  }
+  return "";
+}
+
+function uniqueValues(values) {
+  const seen = new Set();
+  return values.filter((value) => {
+    const normalized = String(value || "").trim();
+    if (!normalized || seen.has(normalized.toLowerCase())) return false;
+    seen.add(normalized.toLowerCase());
+    return true;
+  });
+}
+
+function numericValue(value) {
+  if (value === undefined || value === null || value === "") return NaN;
+  if (typeof value === "number") return value;
+  const cleaned = String(value).replace(/,/g, "").trim();
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function formatDateValue(value) {
+  if (!value) return "-";
+  const raw = String(value).trim();
+  const isoMatch = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoMatch) {
+    const [year, month, day] = isoMatch[1].split("-").map(Number);
+    return new Date(year, month - 1, day).toLocaleDateString();
+  }
+  const slashMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (slashMatch) {
+    const month = Number(slashMatch[1]);
+    const day = Number(slashMatch[2]);
+    const year = Number(slashMatch[3].length === 2 ? `20${slashMatch[3]}` : slashMatch[3]);
+    return new Date(year, month - 1, day).toLocaleDateString();
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? raw : parsed.toLocaleDateString();
 }
 
 function activeLabel(value) {
@@ -240,6 +396,9 @@ function renderChart(selector, type, rows, labelKey, valueKey, label) {
   const context = canvas.getContext("2d");
   const dataRows = rows?.length ? rows : [{ [labelKey]: "No data", [valueKey]: 0 }];
   const isBar = type === "bar";
+  const dark = document.documentElement.dataset.theme === "dark";
+  const axisColor = dark ? "#b8c2d6" : "#475467";
+  const gridColor = dark ? "rgba(184, 194, 214, .18)" : "#eef2f7";
   charts.set(selector, new Chart(context, {
     type,
     data: {
@@ -260,8 +419,8 @@ function renderChart(selector, type, rows, labelKey, valueKey, label) {
       maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: {
-        x: { beginAtZero: isBar, ticks: { maxRotation: 0, autoSkip: true, color: "#475467" }, grid: { display: false } },
-        y: { beginAtZero: !isBar, ticks: { color: "#475467", callback: isBar ? shortTick : numberTick }, grid: { color: "#eef2f7" } },
+        x: { beginAtZero: isBar, ticks: { maxRotation: 0, autoSkip: true, color: axisColor }, grid: { display: false } },
+        y: { beginAtZero: !isBar, ticks: { color: axisColor, callback: isBar ? shortTick : numberTick }, grid: { color: gridColor } },
       },
     },
   }));

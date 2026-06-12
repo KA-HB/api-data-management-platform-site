@@ -1,6 +1,210 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Search Data</title><link rel="stylesheet" href="../css/styles.css?v=20260611e"></head>
-<body><div class="app-shell"><aside class="sidebar"><div class="brand">Data Platform</div><nav class="nav"><a href="./user-dashboard.html">Dashboard</a><a href="./my-datasets.html">My Datasets</a><a class="active" href="./search.html">Search Data</a><a href="./api-keys.html">API Keys</a><a href="./api-docs.html">API Docs</a><button data-logout>Logout</button></nav></aside>
-<main class="content"><h1>Search Data</h1><section class="panel"><form id="search-form" class="toolbar"><label>Dataset / data source <select id="dataset"></select></label><label>Keyword <input id="term" placeholder="employee, project, notes"></label><label>Exact field <input id="exact-key" placeholder="json field name"></label><label>Exact value <input id="exact-value" placeholder="exact value"></label><label>Start date <input id="start-date" type="date"></label><label>End date <input id="end-date" type="date"></label><label>User <input id="user-filter" placeholder="user ID, email, username"></label><label>Employee <input id="employee-filter" placeholder="employee ID or name"></label><label>Job code / project <input id="jobcode-filter" placeholder="job code ID or name"></label><label>Service item <input id="service-item-filter" placeholder="service item"></label><label>Status <input id="status-filter" placeholder="active, archived, approved"></label><label>Customer/project <input id="customer-filter" placeholder="customer, client, project"></label><label>Sort <select id="sort-field"><option value="created_at">Created</option><option value="dataset">Dataset</option></select></label><label>Direction <select id="sort-direction"><option value="desc">Newest first</option><option value="asc">Oldest first</option></select></label><label>Page size <input id="page-size" type="number" min="1" max="250" value="50"></label><button type="button" id="run-search">Search</button><button type="button" class="secondary" id="clear-search">Clear</button><button type="button" class="secondary" id="export-json">Export JSON</button></form></section>
-<section class="grid four"><div class="metric"><strong id="search-unique-records">-</strong><span>Unique records</span></div><div class="metric"><strong id="search-raw-records">-</strong><span>Raw rows</span></div><div class="metric"><strong id="search-datasets">-</strong><span>Datasets</span></div><div class="metric"><strong id="search-hours">-</strong><span>Hours found</span></div></section>
-<section class="grid two"><div class="panel chart-panel"><div class="section-head"><h2>Matches by Dataset</h2><p id="search-scope-summary">All authorized datasets</p></div><canvas id="search-records-by-dataset"></canvas></div><div class="panel chart-panel"><h2>Matches Over Time</h2><canvas id="search-records-over-time"></canvas></div></section>
-<section class="panel"><div class="section-head"><h2>Records</h2><p id="result-summary">Run a search to load records.</p></div><div class="table-wrap"><table><thead><tr><th>Dataset</th><th>Relevant Fields</th><th>Date</th><th>Details</th></tr></thead><tbody id="records-body"></tbody></table></div><div class="pager"><button class="secondary" id="prev-page" type="button">Previous</button><span id="page-status">Page 1</span><button class="secondary" id="next-page" type="button">Next</button></div></section></main></div><script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script><script type="module" src="../js/search.js?v=20260611g"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Search Data</title>
+  <link rel="stylesheet" href="../css/styles.css?v=20260612a">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">Data Platform</div>
+      <nav class="nav">
+        <a href="./user-dashboard.html">Dashboard</a>
+        <a href="./my-datasets.html">My Datasets</a>
+        <a class="active" href="./search.html">Search Data</a>
+        <a href="./api-keys.html">API Keys</a>
+        <a href="./api-docs.html">API Docs</a>
+        <button data-logout>Logout</button>
+      </nav>
+    </aside>
+
+    <main class="content">
+      <div class="topbar">
+        <div>
+          <h1>Search Data</h1>
+          <p>Find proposal evidence by employee, job code, service item, dates, hours, notes, or exact source fields.</p>
+        </div>
+        <button class="secondary" type="button" data-theme-toggle>Dark mode</button>
+      </div>
+
+      <section class="panel search-panel">
+        <form id="search-form" class="search-form">
+          <div class="search-primary">
+            <label>
+              Dataset / data source
+              <select id="dataset"></select>
+            </label>
+            <label class="search-keyword">
+              Broad keyword
+              <input id="term" placeholder="employee, job, service item, notes, or raw JSON">
+            </label>
+            <button type="submit" id="run-search">Search</button>
+            <button type="button" class="secondary" id="clear-search">Clear</button>
+          </div>
+
+          <div class="quick-searches" aria-label="Quick search examples">
+            <button type="button" class="chip" data-quick-term="USFW">USFW</button>
+            <button type="button" class="chip" data-quick-job="Overhead">Overhead</button>
+            <button type="button" class="chip" data-quick-service="Civil Engineer">Civil Engineer</button>
+            <button type="button" class="chip" data-quick-month="2026-05">May 2026</button>
+          </div>
+
+          <details class="advanced-search" open>
+            <summary>Advanced filters</summary>
+            <div class="advanced-grid">
+              <label>
+                Employee
+                <input id="employee-filter" placeholder="employee name, username, email, or ID">
+              </label>
+              <label>
+                Job code / project
+                <input id="jobcode-filter" placeholder="job code 1, 2, 3, project, or job ID">
+              </label>
+              <label>
+                Service item
+                <input id="service-item-filter" placeholder="service item used on the time entry">
+              </label>
+              <label>
+                Start date
+                <input id="start-date" type="date">
+              </label>
+              <label>
+                End date
+                <input id="end-date" type="date">
+              </label>
+              <label>
+                Exact source field
+                <input id="exact-key" list="source-field-options" placeholder="for example service item">
+              </label>
+              <label>
+                Exact value
+                <input id="exact-value" placeholder="exact stored value">
+              </label>
+              <label>
+                User
+                <input id="user-filter" placeholder="user ID, email, or username">
+              </label>
+              <label>
+                Customer / project
+                <input id="customer-filter" placeholder="customer, client, project, or location">
+              </label>
+              <label>
+                Status
+                <input id="status-filter" placeholder="active, approved, archived">
+              </label>
+              <label>
+                Sort
+                <select id="sort-field">
+                  <option value="created_at">Created</option>
+                  <option value="dataset">Dataset</option>
+                </select>
+              </label>
+              <label>
+                Direction
+                <select id="sort-direction">
+                  <option value="desc">Newest first</option>
+                  <option value="asc">Oldest first</option>
+                </select>
+              </label>
+              <label>
+                Page size
+                <input id="page-size" type="number" min="1" max="250" value="50">
+              </label>
+            </div>
+          </details>
+
+          <div class="form-actions">
+            <button type="button" class="secondary" id="export-json">Export JSON</button>
+            <span class="muted" id="search-filter-status">Showing all authorized data until filters are applied.</span>
+          </div>
+        </form>
+      </section>
+
+      <datalist id="source-field-options">
+        <option value="fname"></option>
+        <option value="lname"></option>
+        <option value="employee_name"></option>
+        <option value="username"></option>
+        <option value="email"></option>
+        <option value="user_id"></option>
+        <option value="jobcode_1"></option>
+        <option value="jobcode_2"></option>
+        <option value="jobcode_3"></option>
+        <option value="jobcode_id"></option>
+        <option value="jobcode_name"></option>
+        <option value="service item"></option>
+        <option value="service_item"></option>
+        <option value="local_date"></option>
+        <option value="date"></option>
+        <option value="start"></option>
+        <option value="hours"></option>
+        <option value="duration"></option>
+        <option value="state"></option>
+        <option value="notes"></option>
+      </datalist>
+
+      <section class="grid four">
+        <div class="metric"><strong id="search-unique-records">-</strong><span>Unique records</span></div>
+        <div class="metric"><strong id="search-raw-records">-</strong><span>Raw rows</span></div>
+        <div class="metric"><strong id="search-datasets">-</strong><span>Datasets</span></div>
+        <div class="metric"><strong id="search-hours">-</strong><span>Hours found</span></div>
+      </section>
+
+      <section class="grid two">
+        <div class="panel chart-panel">
+          <div class="section-head">
+            <h2>Matches by Dataset</h2>
+            <p id="search-scope-summary">All authorized datasets</p>
+          </div>
+          <canvas id="search-records-by-dataset"></canvas>
+        </div>
+        <div class="panel chart-panel">
+          <div class="section-head">
+            <h2>Matches Over Time</h2>
+            <p>Unique records by work date where available.</p>
+          </div>
+          <canvas id="search-records-over-time"></canvas>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <h2>Records</h2>
+            <p id="result-summary">Run a search to load records.</p>
+          </div>
+          <div class="legend">
+            <span>Employee</span>
+            <span>Job path</span>
+            <span>Service item</span>
+            <span>Hours</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Dataset</th>
+                <th>Proposal Fields</th>
+                <th>Date</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody id="records-body"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button class="secondary" id="prev-page" type="button">Previous</button>
+          <span id="page-status">Page 1</span>
+          <button class="secondary" id="next-page" type="button">Next</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script type="module" src="../js/search.js?v=20260612a"></script>
+</body>
+</html>

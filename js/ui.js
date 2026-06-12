@@ -87,3 +87,28 @@ export function escapeHtml(value) {
     "'": "&#039;",
   }[char]));
 }
+
+export function initTheme() {
+  const saved = localStorage.getItem("data-platform-theme");
+  const preferredDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+  const theme = saved || (preferredDark ? "dark" : "light");
+  setTheme(theme);
+  document.querySelectorAll("[data-theme-toggle]").forEach((button) => {
+    button.textContent = document.documentElement.dataset.theme === "dark" ? "Light mode" : "Dark mode";
+    button.addEventListener("click", () => {
+      const nextTheme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      setTheme(nextTheme);
+      document.querySelectorAll("[data-theme-toggle]").forEach((toggle) => {
+        toggle.textContent = nextTheme === "dark" ? "Light mode" : "Dark mode";
+      });
+    });
+  });
+}
+
+function setTheme(theme) {
+  const normalized = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = normalized;
+  document.documentElement.style.colorScheme = normalized;
+  localStorage.setItem("data-platform-theme", normalized);
+  document.dispatchEvent(new CustomEvent("themechange", { detail: { theme: normalized } }));
+}

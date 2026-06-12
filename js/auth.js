@@ -1,5 +1,6 @@
 import { supabase } from "./supabaseClient.js";
 import { assertConfigured } from "./config.js";
+import { initTheme } from "./ui.js";
 
 export async function currentProfile() {
   const { data: sessionData } = await supabase.auth.getSession();
@@ -43,6 +44,16 @@ export function bindLogout() {
 }
 
 export function renderShell(profile) {
+  initTheme();
+  const nav = document.querySelector(".nav");
+  if (nav && !document.querySelector("[data-theme-toggle]")) {
+    const themeButton = document.createElement("button");
+    themeButton.type = "button";
+    themeButton.className = "secondary theme-toggle";
+    themeButton.dataset.themeToggle = "";
+    nav.appendChild(themeButton);
+    initTheme();
+  }
   document.querySelectorAll("[data-admin-only]").forEach((el) => {
     el.classList.toggle("hidden", profile.role !== "admin");
   });

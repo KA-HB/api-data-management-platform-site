@@ -1,10 +1,11 @@
 import { supabase } from "./supabaseClient.js";
 import { redirectFromLogin } from "./auth.js";
-import { $, setButtonBusy, toast } from "./ui.js";
+import { $, initTheme, setButtonBusy, toast } from "./ui.js";
 
 const loginForm = $("#login-form");
 const resetForm = $("#reset-form");
 
+initTheme();
 redirectFromLogin();
 
 loginForm?.addEventListener("submit", async (event) => {
