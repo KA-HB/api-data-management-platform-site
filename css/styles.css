@@ -192,9 +192,6 @@ form, .toolbar { display: grid; gap: 12px; }
 .toolbar { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
 .search-panel {
   padding: 16px;
-  position: sticky;
-  top: 14px;
-  z-index: 3;
 }
 .search-form { gap: 14px; }
 .search-primary {
