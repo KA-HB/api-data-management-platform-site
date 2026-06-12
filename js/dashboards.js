@@ -409,7 +409,7 @@ function normalizeExperienceRollup(data = {}) {
   const employeeRows = (data.employee_experience || data.hours_by_employee || []).filter(hasNamedEmployee);
   const detailRows = (data.experience_rows || []).filter(hasNamedEmployee);
   const serviceRows = data.hours_by_service_item || [];
-  const jobRows = data.hours_by_jobcode || [];
+  const jobRows = normalizeProjectHours(data.hours_by_jobcode || []);
   const dayRows = data.hours_by_day || [];
   const employeeNames = distinctValues([...employeeRows, ...detailRows], "employee");
   const serviceNames = distinctValues([...serviceRows, ...detailRows], "service_item").filter((name) => name && name !== "No service item");
@@ -437,6 +437,35 @@ function normalizeExperienceRollup(data = {}) {
 function hasNamedEmployee(row) {
   const employee = String(row?.employee || "").trim();
   return Boolean(employee && employee !== "Unassigned" && !/^[0-9]+$/.test(employee));
+}
+
+function normalizeProjectHours(rows) {
+  const totals = new Map();
+  for (const row of rows || []) {
+    const project = projectLabel(row.jobcode);
+    totals.set(project, (totals.get(project) || 0) + numeric(row.hours));
+  }
+  return Array.from(totals.entries())
+    .map(([jobcode, hours]) => ({ jobcode, hours }))
+    .sort((a, b) => b.hours - a.hours)
+    .slice(0, 15);
+}
+
+function projectLabel(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "Unassigned";
+  const options = qbFilterOptions || {};
+  const level1 = options.jobcode_level1 || [];
+  const level2 = options.jobcode_level2 || [];
+  const level3 = options.jobcode_level3 || [];
+  const directLevel1 = level1.find((row) => row.id === raw || row.name === raw);
+  if (directLevel1) return directLevel1.name;
+  const directLevel2 = level2.find((row) => row.id === raw || row.name === raw);
+  if (directLevel2) return directLevel2.parent_name || directLevel2.parent_id || directLevel2.name;
+  const directLevel3 = level3.find((row) => row.id === raw || row.name === raw);
+  if (directLevel3) return directLevel3.grandparent_name || directLevel3.grandparent_id || directLevel3.parent_name || directLevel3.name;
+  const firstPathPart = raw.split("/").map((part) => part.trim()).find(Boolean);
+  return firstPathPart || raw;
 }
 
 function renderRecentUploads(rows) {
