@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Search Data</title>
-  <link rel="stylesheet" href="../css/styles.css?v=20260612a">
+  <link rel="stylesheet" href="../css/styles.css?v=20260612b">
 </head>
 <body>
   <div class="app-shell">
@@ -23,8 +23,8 @@
     <main class="content">
       <div class="topbar">
         <div>
-          <h1>Search Data</h1>
-          <p>Find proposal evidence by employee, job code, service item, dates, hours, notes, or exact source fields.</p>
+          <h1>Experience Search</h1>
+          <p>Employee, job, service item, date, and hour records for operations and proposal work.</p>
         </div>
         <button class="secondary" type="button" data-theme-toggle>Dark mode</button>
       </div>
@@ -115,7 +115,7 @@
             </div>
           </details>
 
-          <div class="form-actions">
+          <div class="form-actions search-actions">
             <button type="button" class="secondary" id="export-json">Export JSON</button>
             <span class="muted" id="search-filter-status">Showing all authorized data until filters are applied.</span>
           </div>
@@ -145,7 +145,7 @@
         <option value="notes"></option>
       </datalist>
 
-      <section class="grid four">
+      <section class="grid four search-metrics">
         <div class="metric"><strong id="search-unique-records">-</strong><span>Unique records</span></div>
         <div class="metric"><strong id="search-raw-records">-</strong><span>Raw rows</span></div>
         <div class="metric"><strong id="search-datasets">-</strong><span>Datasets</span></div>
@@ -169,7 +169,7 @@
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel results-panel">
         <div class="section-head">
           <div>
             <h2>Records</h2>
@@ -205,6 +205,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script type="module" src="../js/search.js?v=20260612a"></script>
+  <script type="module" src="../js/search.js?v=20260612b"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 import { requireAuth, renderShell } from "./auth.js";
 import { supabase } from "./supabaseClient.js";
-import { $, escapeHtml, renderRows, setButtonBusy, setText, startProgress, stopProgress, toast } from "./ui.js";
+import { $, escapeHtml, renderRows, setButtonBusy, setText, startProgress, stopProgress, toast, updateProgress } from "./ui.js";
 
 const profile = await requireAuth();
 let lastRows = [];
@@ -8,6 +8,7 @@ let lastSummary = null;
 let page = 1;
 let total = 0;
 let charts = new Map();
+let activeSearchRun = 0;
 
 if (profile) {
   renderShell(profile);
@@ -70,19 +71,29 @@ async function runSearch(event = null) {
     return;
   }
   const button = event?.submitter || $("#run-search");
-  const progress = startProgress("Searching records...");
+  const searchRun = ++activeSearchRun;
+  const progress = startProgress("Searching experience records...");
   setButtonBusy(button, true, "Searching...");
+  setText("#result-summary", "Searching matching experience records...");
+  renderRows($("#records-body"), [{ loading: true }], [
+    () => `<span class="muted">Searching...</span>`,
+    () => `<span class="muted">Matching employee, job, service item, and hour fields.</span>`,
+    () => "",
+    () => "",
+  ]);
   const pageSize = pageSizeValue();
   const basePayload = payload;
-  const [{ data, error }, summary] = await Promise.all([
-    callSearchAdvanced(basePayload, pageSize, (page - 1) * pageSize),
-    callSearchSummary(basePayload),
-  ]);
-  setButtonBusy(button, false);
-  if (error) return stopProgress(progress, error.message, "error");
+  const recordsPromise = callSearchAdvanced(basePayload, pageSize, (page - 1) * pageSize);
+  const summaryPromise = callSearchSummary(basePayload);
+  const { data, error } = await recordsPromise;
+  if (searchRun !== activeSearchRun) return;
+  if (error) {
+    setButtonBusy(button, false);
+    return stopProgress(progress, error.message, "error");
+  }
 
   lastRows = data || [];
-  total = Number(lastRows[0]?.total_count || summary.data?.unique_records || 0);
+  total = Number(lastRows[0]?.total_count || 0);
   renderRows($("#records-body"), lastRows, [
     (r) => escapeHtml(r.dataset_name),
     (r) => renderRelevantFields(r),
@@ -90,31 +101,42 @@ async function runSearch(event = null) {
     (r) => renderRecordDetails(r),
   ]);
   updatePager();
-  renderSearchSummary(summary.data);
   updateFilterStatus();
-  const summaryNote = summary.data ? "unique matching records" : "matching records";
-  stopProgress(progress, `${total.toLocaleString()} ${summaryNote}.`, total ? "success" : "info");
+  updateProgress(progress, "Updating charts and totals...");
+
+  const summary = await summaryPromise;
+  if (searchRun !== activeSearchRun) return;
+  setButtonBusy(button, false);
+  if (summary.error) {
+    stopProgress(progress, `${total.toLocaleString()} matching records loaded. Charts could not update: ${summary.error.message}`, "info");
+    return;
+  }
+  total = Number(lastRows[0]?.total_count || summary.data?.unique_records || 0);
+  updatePager();
+  renderSearchSummary(summary.data);
+  stopProgress(progress, `${total.toLocaleString()} unique matching records.`, total ? "success" : "info");
 }
 
 async function callSearchAdvanced(payload, pageSize, offset) {
   const fullPayload = { ...payload, limit_count: pageSize, offset_count: offset };
-  const result = await supabase.rpc("search_records_advanced", fullPayload);
+  const result = await supabase.rpc("experience_search_records", fullPayload);
   if (!isSchemaCacheError(result.error)) return result;
-  if (payload.service_item_filter) {
-    return { data: null, error: { message: "Service item filtering requires the latest Supabase search migration." } };
-  }
   return supabase.rpc("search_records_advanced", { ...legacySearchPayload(payload), limit_count: pageSize, offset_count: offset });
 }
 
 async function callSearchSummary(payload) {
-  const result = await supabase.rpc("search_records_summary", payload);
+  const result = await supabase.rpc("experience_search_summary", payload);
   if (!isSchemaCacheError(result.error)) return result;
-  return { data: null, error: null };
+  return supabase.rpc("search_records_summary", legacySearchPayload(payload));
 }
 
 function legacySearchPayload(payload) {
-  const { service_item_filter, ...legacy } = payload;
-  return legacy;
+  const { p_start_date, p_end_date, ...legacy } = payload;
+  return {
+    ...legacy,
+    start_date: p_start_date ? `${p_start_date}T00:00:00` : null,
+    end_date: p_end_date ? `${p_end_date}T23:59:59` : null,
+  };
 }
 
 function searchPayload() {
@@ -123,8 +145,8 @@ function searchPayload() {
     search_term: $("#term").value.trim() || null,
     exact_key: $("#exact-key").value.trim() || null,
     exact_value: $("#exact-value").value.trim() || null,
-    start_date: dateValue("#start-date"),
-    end_date: dateValue("#end-date", true),
+    p_start_date: dateValue("#start-date"),
+    p_end_date: dateValue("#end-date"),
     user_filter: $("#user-filter").value.trim() || null,
     employee_filter: $("#employee-filter").value.trim() || null,
     jobcode_filter: $("#jobcode-filter").value.trim() || null,
@@ -177,8 +199,8 @@ function hasActiveScope(payload = searchPayload()) {
     payload.search_term ||
     payload.exact_key ||
     payload.exact_value ||
-    payload.start_date ||
-    payload.end_date ||
+    payload.p_start_date ||
+    payload.p_end_date ||
     payload.user_filter ||
     payload.employee_filter ||
     payload.jobcode_filter ||
@@ -196,7 +218,7 @@ function updateFilterStatus() {
     payload.employee_filter ? `employee "${payload.employee_filter}"` : "",
     payload.jobcode_filter ? `job "${payload.jobcode_filter}"` : "",
     payload.service_item_filter ? `service "${payload.service_item_filter}"` : "",
-    payload.start_date || payload.end_date ? dateRangeLabel(payload.start_date, payload.end_date) : "",
+    payload.p_start_date || payload.p_end_date ? dateRangeLabel(payload.p_start_date, payload.p_end_date) : "",
     payload.exact_key && payload.exact_value ? `${payload.exact_key} = ${payload.exact_value}` : "",
   ].filter(Boolean);
   setText("#search-filter-status", active.length ? `Active scope: ${active.join(" | ")}` : "Showing all authorized data until filters are applied.");
@@ -222,10 +244,10 @@ function setMonthRange(monthValue) {
   $("#end-date").value = end.toISOString().slice(0, 10);
 }
 
-function dateValue(selector, endOfDay = false) {
+function dateValue(selector) {
   const value = $(selector).value;
   if (!value) return null;
-  return `${value}T${endOfDay ? "23:59:59" : "00:00:00"}`;
+  return value;
 }
 
 function exportJson() {
