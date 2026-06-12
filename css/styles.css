@@ -433,6 +433,18 @@ summary {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.anomaly-table td:nth-child(3) {
+  min-width: 220px;
+  max-width: 320px;
+  white-space: normal;
+}
+.anomaly-table td:nth-child(8),
+.anomaly-table td:nth-child(9),
+.anomaly-table td:nth-child(10),
+.anomaly-table td:nth-child(11) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 
 .status {
   display: inline-flex;
@@ -448,6 +460,7 @@ summary {
 .status.ok { background: #dcfce7; color: var(--ok); }
 .status.warn { background: #fef3c7; color: #92400e; }
 .status.danger { background: #fee2e2; color: var(--danger); }
+.status.info { background: #e0f2fe; color: #075985; }
 
 .notice {
   border: 1px solid #f2d18b;
