@@ -109,7 +109,7 @@ function updateThemeToggle(button) {
   const isDark = document.documentElement.dataset.theme === "dark";
   const label = isDark ? "Switch to light mode" : "Switch to dark mode";
   button.classList.add("theme-toggle");
-  button.innerHTML = `<span aria-hidden="true">${isDark ? "☀" : "☾"}</span>`;
+  button.innerHTML = `<span aria-hidden="true">${isDark ? "&#9728;" : "&#9790;"}</span>`;
   button.setAttribute("aria-label", label);
   button.title = label;
 }
