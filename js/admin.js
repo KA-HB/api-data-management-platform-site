@@ -9,6 +9,7 @@ if (profile) {
   if ($("#users-body")) loadUsers();
   if ($("#logs-body")) loadLogs();
   $("#user-form")?.addEventListener("submit", inviteUser);
+  $("#grant-qbtime-access")?.addEventListener("click", grantQbtimeAccess);
 }
 
 async function loadUsers() {
@@ -74,9 +75,56 @@ async function inviteUser(event) {
   const payload = await response.json();
   setButtonBusy(button, false);
   if (!response.ok) return toast(payload.error, "error");
+  try {
+    await grantSharedQbtimeAccess([payload.data.id]);
+  } catch (error) {
+    toast(`User created, but dashboard access still needs to be granted: ${error.message}`, "error");
+  }
   toast(`User created. Temporary password: ${payload.data.temporary_password}`);
   event.target.reset();
   loadUsers();
+}
+
+async function grantQbtimeAccess(event) {
+  const button = event.currentTarget;
+  setButtonBusy(button, true, "Granting...");
+  try {
+    const stats = await grantSharedQbtimeAccess();
+    toast(`QuickBooks Time access granted for ${stats.users} active users across ${stats.datasets} datasets.`, "success");
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+async function grantSharedQbtimeAccess(userIds = null) {
+  const [{ data: datasets, error: datasetError }, { data: users, error: userError }] = await Promise.all([
+    supabase.from("datasets").select("id,name,source_type").neq("name", "QuickBooks Time PTO"),
+    userIds?.length
+      ? supabase.from("profiles").select("id").in("id", userIds).eq("active", true)
+      : supabase.from("profiles").select("id").eq("active", true),
+  ]);
+  if (datasetError) throw datasetError;
+  if (userError) throw userError;
+
+  const sharedDatasets = (datasets || []).filter((dataset) =>
+    dataset.source_type === "quickbooks_time" || String(dataset.name || "").startsWith("QuickBooks Time ")
+  );
+  const permissions = (users || []).flatMap((user) =>
+    sharedDatasets.map((dataset) => ({
+      dataset_id: dataset.id,
+      user_id: user.id,
+      can_export: true,
+    }))
+  );
+  if (!permissions.length) return { users: users?.length || 0, datasets: sharedDatasets.length };
+
+  const { error } = await supabase
+    .from("dataset_permissions")
+    .upsert(permissions, { onConflict: "dataset_id,user_id" });
+  if (error) throw error;
+  return { users: users?.length || 0, datasets: sharedDatasets.length };
 }
 
 async function loadLogs() {

@@ -14,6 +14,12 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}));
 
   if (req.method === "POST") {
+    if (body.action === "grant_qbtime_access") {
+      const result = await grantSharedQbtimeAccess(service);
+      await userSupabase.rpc("log_activity", { action_name: "user.qbtime_access_granted", details_json: result });
+      return jsonResponse({ data: result });
+    }
+
     const password = body.password || crypto.randomUUID();
     const { data, error } = await service.auth.admin.createUser({
       email: body.email,
@@ -23,6 +29,7 @@ Deno.serve(async (req) => {
     });
     if (error) return jsonResponse({ error: error.message }, 400);
     await service.from("profiles").upsert({ id: data.user.id, email: body.email, role: body.role || "user", active: true });
+    await grantSharedQbtimeAccess(service, data.user.id);
     await userSupabase.rpc("log_activity", { action_name: "user.created", details_json: { user_id: data.user.id, email: body.email } });
     return jsonResponse({ data: { id: data.user.id, email: body.email, temporary_password: password } }, 201);
   }
@@ -45,6 +52,7 @@ Deno.serve(async (req) => {
     if (Object.keys(updates).length) {
       const { error } = await service.from("profiles").update(updates).eq("id", body.id);
       if (error) return jsonResponse({ error: error.message }, 400);
+      if (updates.active === true) await grantSharedQbtimeAccess(service, body.id);
       await userSupabase.rpc("log_activity", { action_name: "user.updated", details_json: { user_id: body.id, updates } });
     }
     if (passwordUpdated) {
@@ -63,3 +71,43 @@ Deno.serve(async (req) => {
 
   return jsonResponse({ error: "Method not allowed" }, 405);
 });
+
+async function grantSharedQbtimeAccess(service: ReturnType<typeof serviceClient>, userId?: string) {
+  const { data: datasets, error: datasetError } = await service
+    .from("datasets")
+    .select("id,name,source_type")
+    .neq("name", "QuickBooks Time PTO");
+  if (datasetError) throw datasetError;
+
+  const sharedDatasets = (datasets || []).filter((dataset) =>
+    dataset.source_type === "quickbooks_time" || String(dataset.name || "").startsWith("QuickBooks Time ")
+  );
+  if (!sharedDatasets.length) return { users: 0, datasets: 0, permissions_created: 0 };
+
+  const userQuery = service
+    .from("profiles")
+    .select("id")
+    .eq("active", true);
+  const { data: users, error: userError } = userId ? await userQuery.eq("id", userId) : await userQuery;
+  if (userError) throw userError;
+
+  const permissions = (users || []).flatMap((user) =>
+    sharedDatasets.map((dataset) => ({
+      dataset_id: dataset.id,
+      user_id: user.id,
+      can_export: true,
+    }))
+  );
+  if (!permissions.length) return { users: users?.length || 0, datasets: sharedDatasets.length, permissions_created: 0 };
+
+  const { error: permissionError } = await service
+    .from("dataset_permissions")
+    .upsert(permissions, { onConflict: "dataset_id,user_id", ignoreDuplicates: false });
+  if (permissionError) throw permissionError;
+
+  return {
+    users: users?.length || 0,
+    datasets: sharedDatasets.length,
+    permissions_created: permissions.length,
+  };
+}

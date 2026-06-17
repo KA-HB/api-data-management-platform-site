@@ -90,6 +90,7 @@ async function loadDashboard() {
 }
 
 function renderGeneralDashboard(summary, coverage) {
+  const hasNoUserDatasets = profile.role !== "admin" && numeric(summary?.datasets) === 0;
   setText("#metric-datasets", formatNumber(summary?.datasets));
   setText("#metric-keys", formatNumber(summary?.api_keys));
   setText("#metric-raw-records", formatNumber(coverage?.raw_records ?? summary?.records));
@@ -97,7 +98,7 @@ function renderGeneralDashboard(summary, coverage) {
   setText("#metric-hours", formatNumber(coverage?.filtered_hours ?? coverage?.hours));
   setText("#metric-employees", formatNumber(coverage?.filtered_employees ?? coverage?.employee_count));
   setText("#metric-services", formatNumber(coverage?.filtered_service_items ?? coverage?.service_item_count));
-  setText("#data-scope-summary", coverage ? scopeSummary(coverage) : `Showing ${formatNumber(summary?.records)} authorized records. Full-year hours, employees, service-item totals, and duplicate removal require the latest Supabase search migration.`);
+  setText("#data-scope-summary", hasNoUserDatasets ? "No dashboard datasets are assigned to this user yet. An admin can grant QuickBooks Time dashboard access from User Management." : coverage ? scopeSummary(coverage) : `Showing ${formatNumber(summary?.records)} authorized records. Full-year hours, employees, service-item totals, and duplicate removal require the latest Supabase search migration.`);
 
   renderChart("#records-by-dataset", "bar", coverage?.records_by_dataset || summary?.records_by_dataset || [], "name", coverage ? "records" : "record_count", coverage ? "Unique Records" : "Records");
   renderChart("#records-over-time", "line", coverage?.records_by_day || summary?.records_by_day || [], "date", "records", coverage ? "Unique Records" : "Records");
@@ -183,6 +184,19 @@ function clearQbVisuals() {
 }
 
 async function callQbRollups(payload) {
+  const result = await callQbRollupOnce(payload);
+  if (!shouldExpandJobcodeFilter(payload, result.data, result.error)) return result;
+
+  const expandedPayloads = expandedJobcodePayloads(payload);
+  if (!expandedPayloads.length) return result;
+
+  const expandedResults = await callExpandedQbRollups(expandedPayloads);
+  if (expandedResults.error) return result;
+  if (!numeric(expandedResults.data?.filtered_timesheets)) return result;
+  return expandedResults;
+}
+
+async function callQbRollupOnce(payload) {
   const result = await supabase.rpc("dashboard_qbtime_rollups", payload);
   if (!isSchemaCacheError(result.error)) return result;
   if (payload.dataset_uuid) {
@@ -194,6 +208,194 @@ async function callQbRollups(payload) {
   if (!isSchemaCacheError(legacyResult.error)) return legacyResult;
   delete legacyPayload.keyword_filter;
   return supabase.rpc("dashboard_qbtime_rollups", legacyPayload);
+}
+
+function shouldExpandJobcodeFilter(payload, data, error) {
+  if (error) return false;
+  const hasJobcodeFilter = Boolean(payload.jobcode_level1_filter || payload.jobcode_level2_filter || payload.jobcode_level3_filter);
+  return hasJobcodeFilter && numeric(data?.filtered_timesheets) === 0;
+}
+
+async function callExpandedQbRollups(payloads) {
+  const results = [];
+  for (let index = 0; index < payloads.length; index += 8) {
+    const batch = payloads.slice(index, index + 8);
+    const settled = await Promise.all(batch.map((payload) => callQbRollupOnce(payload)));
+    const errorResult = settled.find((result) => result.error);
+    if (errorResult) return errorResult;
+    results.push(...settled.map((result) => result.data).filter(Boolean));
+  }
+  return { data: mergeQbRollupData(results), error: null };
+}
+
+function expandedJobcodePayloads(payload) {
+  if (!qbFilterOptions) return [];
+  const base = { ...payload, jobcode_level1_filter: null, jobcode_level2_filter: null, jobcode_level3_filter: null };
+  const level2Rows = qbFilterOptions.jobcode_level2 || [];
+  const level3Rows = qbFilterOptions.jobcode_level3 || [];
+  const payloads = new Map();
+
+  const addPayload = (levelKey, rowOrValue) => {
+    const value = typeof rowOrValue === "object" ? rowOrValue?.id : rowOrValue;
+    const filter = String(value || "").trim();
+    if (!filter) return;
+    const nextPayload = { ...base, [levelKey]: filter };
+    payloads.set(`${levelKey}:${filter}`, nextPayload);
+  };
+
+  if (payload.jobcode_level3_filter) {
+    for (const row of matchingRows(level3Rows, payload.jobcode_level3_filter)) addPayload("jobcode_level3_filter", row);
+    if (!payloads.size) addPayload("jobcode_level3_filter", payload.jobcode_level3_filter);
+    return Array.from(payloads.values());
+  }
+
+  if (payload.jobcode_level2_filter) {
+    const children = level3Rows.filter((row) => optionMatches(row, payload.jobcode_level2_filter, ["parent_id", "parent_name"]));
+    for (const row of children) addPayload("jobcode_level3_filter", row);
+    for (const row of matchingRows(level2Rows, payload.jobcode_level2_filter)) addPayload("jobcode_level2_filter", row);
+    if (!payloads.size) addPayload("jobcode_level2_filter", payload.jobcode_level2_filter);
+    return Array.from(payloads.values());
+  }
+
+  if (payload.jobcode_level1_filter) {
+    const children = level2Rows.filter((row) => optionMatches(row, payload.jobcode_level1_filter, ["parent_id", "parent_name"]));
+    const descendants = level3Rows.filter((row) => optionMatches(row, payload.jobcode_level1_filter, ["grandparent_id", "grandparent_name"]));
+    for (const row of children) addPayload("jobcode_level2_filter", row);
+    for (const row of descendants) addPayload("jobcode_level3_filter", row);
+    if (!payloads.size) addPayload("jobcode_level1_filter", payload.jobcode_level1_filter);
+  }
+
+  return Array.from(payloads.values());
+}
+
+function matchingRows(rows, value) {
+  return rows.filter((row) => optionMatches(row, value, ["id", "name"]));
+}
+
+function optionMatches(row, value, keys) {
+  const selected = String(value || "").trim();
+  return Boolean(selected && keys.some((key) => String(row?.[key] || "").trim() === selected));
+}
+
+function mergeQbRollupData(results) {
+  const merged = {
+    hours_by_employee: mergeRows(results, "hours_by_employee", (row) => row.employee, {
+      hours: "sum",
+      timesheets: "sum",
+    }),
+    hours_by_jobcode: mergeRows(results, "hours_by_jobcode", (row) => projectLabel(row.jobcode), {
+      hours: "sum",
+    }).map((row) => ({ jobcode: row.key, hours: row.hours })),
+    hours_by_service_item: mergeRows(results, "hours_by_service_item", (row) => row.service_item, {
+      hours: "sum",
+    }),
+    hours_by_day: mergeRows(results, "hours_by_day", (row) => row.date, {
+      hours: "sum",
+    }),
+    records_by_dataset: mergeRows(results, "records_by_dataset", (row) => row.name, {
+      records: "sum",
+    }),
+    records_by_day: mergeRows(results, "records_by_day", (row) => row.date, {
+      records: "sum",
+    }),
+    experience_rows: mergeExperienceRows(results),
+  };
+
+  merged.employee_experience = mergeEmployeeExperience(results);
+  merged.filtered_timesheets = sumResults(results, "filtered_timesheets");
+  merged.filtered_hours = roundValue(sumResults(results, "filtered_hours"));
+  merged.filtered_employees = distinctValues(merged.employee_experience, "employee").length;
+  merged.filtered_service_items = distinctValues(merged.hours_by_service_item, "service_item").filter((name) => name && name !== "No service item").length;
+  merged.filtered_jobcodes = distinctValues(merged.experience_rows, "jobcode").filter((name) => name && name !== "Unassigned").length || distinctValues(merged.hours_by_jobcode, "jobcode").length;
+  merged.raw_records = sumResults(results, "raw_records") || merged.filtered_timesheets;
+  merged.unique_records = sumResults(results, "unique_records") || merged.filtered_timesheets;
+  merged.duplicates_removed = sumResults(results, "duplicates_removed");
+  merged.dataset_count = Math.max(...results.map((data) => numeric(data.dataset_count)), 0);
+  merged.date_start = minDate(results.map((data) => data.date_start));
+  merged.date_end = maxDate(results.map((data) => data.date_end));
+
+  merged.hours_by_employee = limitRows(merged.hours_by_employee, "hours", 15);
+  merged.hours_by_jobcode = limitRows(merged.hours_by_jobcode, "hours", 15);
+  merged.hours_by_service_item = limitRows(merged.hours_by_service_item, "hours", 15);
+  merged.records_by_dataset = limitRows(merged.records_by_dataset, "records", 12);
+  merged.employee_experience = limitRows(merged.employee_experience, "hours", 50);
+  merged.experience_rows = limitRows(merged.experience_rows, "hours", 100);
+  return merged;
+}
+
+function mergeRows(results, property, keyFn, numericFields) {
+  const rows = new Map();
+  for (const data of results) {
+    for (const row of data?.[property] || []) {
+      const key = String(keyFn(row) || "").trim() || "Unassigned";
+      const current = rows.get(key) || { ...row, key };
+      for (const [field, mode] of Object.entries(numericFields)) {
+        if (mode === "sum") current[field] = roundValue(numeric(current[field]) + numeric(row[field]));
+      }
+      rows.set(key, current);
+    }
+  }
+  return Array.from(rows.values());
+}
+
+function mergeEmployeeExperience(results) {
+  const rows = mergeRows(results, "employee_experience", (row) => row.employee, {
+    hours: "sum",
+    timesheets: "sum",
+  });
+  for (const row of rows) {
+    const matches = results.flatMap((data) => data?.experience_rows || []).filter((detail) => detail.employee === row.employee);
+    row.jobcodes = distinctValues(matches, "jobcode").filter((value) => value && value !== "Unassigned").length || numeric(row.jobcodes);
+    row.service_items = distinctValues(matches, "service_item").filter((value) => value && value !== "No service item").length || numeric(row.service_items);
+    row.first_work = minDate(matches.map((detail) => detail.first_work).concat(row.first_work));
+    row.last_work = maxDate(matches.map((detail) => detail.last_work).concat(row.last_work));
+  }
+  return rows;
+}
+
+function mergeExperienceRows(results) {
+  const rows = new Map();
+  for (const data of results) {
+    for (const row of data?.experience_rows || []) {
+      const key = [
+        row.employee,
+        row.jobcode_level1,
+        row.jobcode_level2,
+        row.jobcode_level3,
+        row.jobcode,
+        row.service_item,
+      ].map((value) => String(value || "").trim()).join("|");
+      const current = rows.get(key) || { ...row, hours: 0, timesheets: 0 };
+      current.hours = roundValue(numeric(current.hours) + numeric(row.hours));
+      current.timesheets = numeric(current.timesheets) + numeric(row.timesheets);
+      current.first_work = minDate([current.first_work, row.first_work]);
+      current.last_work = maxDate([current.last_work, row.last_work]);
+      rows.set(key, current);
+    }
+  }
+  return Array.from(rows.values());
+}
+
+function sumResults(results, key) {
+  return roundValue(results.reduce((total, data) => total + numeric(data?.[key]), 0));
+}
+
+function limitRows(rows, sortKey, limit) {
+  return [...rows].sort((a, b) => numeric(b[sortKey]) - numeric(a[sortKey])).slice(0, limit);
+}
+
+function roundValue(value) {
+  return Math.round(numeric(value) * 100) / 100;
+}
+
+function minDate(values) {
+  const dates = values.filter(Boolean).sort();
+  return dates[0] || null;
+}
+
+function maxDate(values) {
+  const dates = values.filter(Boolean).sort();
+  return dates[dates.length - 1] || null;
 }
 
 async function callSearchSummary() {
