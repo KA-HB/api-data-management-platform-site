@@ -104,6 +104,7 @@ function renderGeneralDashboard(summary, coverage) {
   renderChart("#records-by-dataset", "bar", coverage?.records_by_dataset || summary?.records_by_dataset || [], "name", coverage ? "records" : "record_count", coverage ? "Unique Records" : "Records");
   renderChart("#records-over-time", "line", coverage?.records_by_day || summary?.records_by_day || [], "date", "records", coverage ? "Unique Records" : "Records");
   renderChart("#activity-over-time", "line", summary?.activity_by_day || [], "date", "events", "Events");
+  renderExperienceOverview(coverage || {});
 }
 
 function buildFastCoverageSummary(summary) {
@@ -408,20 +409,49 @@ async function rawQbRollupFallback(payload, cachedData, cachedError) {
   const timesheetDatasets = rawTimesheetDatasets(payload);
   if (!timesheetDatasets.length) return null;
   const cachedEnd = cachedData?.date_end;
+  if (cachedEnd && payload.end_date && String(payload.end_date) <= String(cachedEnd)) return null;
   if (cachedEnd && !(await hasNewerRawTimesheets(timesheetDatasets, cachedEnd))) return null;
 
   try {
+    const fallbackPayload = deltaFallbackPayload(payload, cachedEnd);
+    if (fallbackPayload.start_date && fallbackPayload.end_date && String(fallbackPayload.start_date) > String(fallbackPayload.end_date)) return null;
     const [employeeRows, jobcodeRows, timesheetRows] = await Promise.all([
       fetchRawDatasetRows("QuickBooks Time Employees", "id,json_data"),
       fetchRawDatasetRows("QuickBooks Time Job Codes", "id,json_data"),
-      fetchRawTimesheetRows(timesheetDatasets, payload),
+      fetchRawTimesheetRows(timesheetDatasets, fallbackPayload),
     ]);
     if (!timesheetRows.length) return null;
-    return { data: buildRawQbRollup(timesheetRows, employeeRows, jobcodeRows, payload, timesheetDatasets), error: null };
+    const deltaRollup = buildRawQbRollup(timesheetRows, employeeRows, jobcodeRows, fallbackPayload, timesheetDatasets);
+    const data = cachedData && cachedEnd
+      ? mergeQbRollupData([cachedData, deltaRollup])
+      : deltaRollup;
+    data.is_raw_delta_fallback = Boolean(cachedData && cachedEnd);
+    return { data, error: null };
   } catch (error) {
     console.warn("Raw QuickBooks Time dashboard fallback failed", error);
     return null;
   }
+}
+
+function deltaFallbackPayload(payload, cachedEnd) {
+  if (!cachedEnd) return payload;
+  const nextDate = nextIsoDate(cachedEnd);
+  return {
+    ...payload,
+    start_date: maxIsoDate(payload.start_date, nextDate),
+  };
+}
+
+function nextIsoDate(value) {
+  if (!value) return null;
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function maxIsoDate(...values) {
+  return values.filter(Boolean).sort().pop() || null;
 }
 
 function rawTimesheetDatasets(payload) {
@@ -888,6 +918,16 @@ function renderChart(selector, type, rows, labelKey, valueKey, label) {
       },
     },
   }));
+}
+
+function renderExperienceOverview(data) {
+  const normalized = normalizeExperienceRollup(data);
+  renderChart("#hours-by-employee", "bar", normalized.hours_by_employee, "employee", "hours", "Hours");
+  renderChart("#hours-by-jobcode", "bar", normalized.hours_by_jobcode, "jobcode", "hours", "Hours");
+  renderChart("#hours-by-service-item", "bar", normalized.hours_by_service_item, "service_item", "hours", "Hours");
+  renderChart("#hours-over-time", "line", normalized.hours_by_day, "date", "hours", "Hours");
+  renderEmployeeExperience(normalized.employee_experience);
+  renderExperienceDetail(normalized.experience_rows);
 }
 
 function renderEmployeeExperience(rows) {
