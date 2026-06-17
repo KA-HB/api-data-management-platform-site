@@ -260,17 +260,23 @@ async function syncResourceDataset(
   let moreAvailable = false;
   let reachedPageCap = false;
 
+  if (resource.useDateRange) {
+    const { end } = configuredDateWindow();
+    const recentDays = Math.max(Number(Deno.env.get("QB_TIME_RECENT_SYNC_DAYS") || "21"), 1);
+    const recentStart = new Date(end);
+    recentStart.setUTCDate(recentStart.getUTCDate() - recentDays);
+    const recentRows = await fetchDateWindowRows(resource.endpoint, accessToken, recentStart, end, perPage, maxPages);
+    await upsertDatasetRows(supabase, dataset.id, recentRows);
+  }
+
   while (page <= maxPages && pagesProcessed < pagesPerRun) {
     const url = new URL(`${base}/${resource.endpoint}`);
     url.searchParams.set("per_page", String(perPage));
     url.searchParams.set("page", String(page));
     if (resource.useDateRange) {
-      const configuredStart = Deno.env.get("QB_TIME_SYNC_START_DATE");
-      const configuredEnd = Deno.env.get("QB_TIME_SYNC_END_DATE");
-      const end = configuredEnd ? new Date(`${configuredEnd}T00:00:00Z`) : new Date();
-      const start = configuredStart ? new Date(`${configuredStart}T00:00:00Z`) : new Date(Date.UTC(end.getUTCFullYear() - 2, end.getUTCMonth(), end.getUTCDate()));
-      url.searchParams.set("start_date", start.toISOString().slice(0, 10));
-      url.searchParams.set("end_date", end.toISOString().slice(0, 10));
+      const { start, end } = configuredDateWindow();
+      url.searchParams.set("start_date", dateParam(start));
+      url.searchParams.set("end_date", dateParam(end));
     }
 
     const pageRows = await fetchPageRows(url, accessToken, resource.endpoint);
@@ -291,7 +297,46 @@ async function syncResourceDataset(
   if (moreAvailable && pagesProcessed >= pagesPerRun) {
     console.warn(`QuickBooks Time ${resource.endpoint} paused after ${pagesProcessed} pages; run sync again to continue from ${total} rows.`);
   }
+  total = await countDatasetRecords(supabase, dataset.id);
+  await supabase.from("datasets").update({ record_count: total }).eq("id", dataset.id);
   return total;
+}
+
+function configuredDateWindow() {
+  const configuredStart = Deno.env.get("QB_TIME_SYNC_START_DATE");
+  const configuredEnd = Deno.env.get("QB_TIME_SYNC_END_DATE");
+  const end = configuredEnd ? new Date(`${configuredEnd}T00:00:00Z`) : new Date();
+  const start = configuredStart ? new Date(`${configuredStart}T00:00:00Z`) : new Date(Date.UTC(end.getUTCFullYear() - 2, end.getUTCMonth(), end.getUTCDate()));
+  return { start, end };
+}
+
+function dateParam(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+async function fetchDateWindowRows(resource: string, accessToken: string, start: Date, end: Date, perPage: number, maxPages: number) {
+  const base = Deno.env.get("QB_TIME_API_URL") || "https://rest.tsheets.com/api/v1";
+  const rows: unknown[] = [];
+  for (let page = 1; page <= maxPages; page += 1) {
+    const url = new URL(`${base}/${resource}`);
+    url.searchParams.set("per_page", String(perPage));
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("start_date", dateParam(start));
+    url.searchParams.set("end_date", dateParam(end));
+    const pageRows = await fetchPageRows(url, accessToken, resource);
+    rows.push(...pageRows.rows);
+    if (!pageRows.more || !pageRows.rows.length) break;
+  }
+  return rows;
+}
+
+async function countDatasetRecords(supabase: ReturnType<typeof serviceClient>, datasetId: string) {
+  const { count, error } = await supabase
+    .from("records")
+    .select("id", { count: "exact", head: true })
+    .eq("dataset_id", datasetId);
+  if (error) throw error;
+  return count || 0;
 }
 
 async function fetchPageRows(url: URL, accessToken: string, resource: string) {
