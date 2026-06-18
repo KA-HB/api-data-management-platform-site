@@ -10,6 +10,15 @@ let availableDatasets = [];
 let lastSummary = null;
 let lastGeneralCoverage = null;
 const RAW_ROLLUP_BATCH_SIZE = 1000;
+const AUTOMATIC_RAW_ROLLUP_FALLBACK = readBooleanFlag("data-platform-raw-rollup-fallback");
+
+function readBooleanFlag(key) {
+  try {
+    return localStorage.getItem(key) === "true";
+  } catch {
+    return false;
+  }
+}
 
 if (profile) {
   renderShell(profile);
@@ -80,7 +89,10 @@ async function loadDashboard() {
     renderGeneralDashboard(summary, lastGeneralCoverage);
     stopProgress(progress);
 
-    if (profile.role === "admin" && $("#qb-viz-filters")) await loadQbVisuals();
+    if (profile.role === "admin" && $("#qb-viz-filters")) {
+      const normalized = normalizeExperienceRollup(lastGeneralCoverage);
+      setText("#qb-filter-summary", `${formatNumber(normalized.filtered_timesheets)} experience records, ${formatNumber(normalized.filtered_hours)} hours${dateRangeLabel(normalized)}`);
+    }
 
     renderRecentUploads(isExperienceDashboard() ? summary.recent_uploads || [] : [...availableDatasets].sort((a, b) => Number(b.record_count || 0) - Number(a.record_count || 0)));
     renderRecentSyncs(summary.recent_syncs || []);
@@ -405,6 +417,7 @@ function maxDate(values) {
 }
 
 async function rawQbRollupFallback(payload, cachedData, cachedError) {
+  if (!AUTOMATIC_RAW_ROLLUP_FALLBACK) return null;
   if (cachedError || !availableDatasets.length) return null;
   const timesheetDatasets = rawTimesheetDatasets(payload);
   if (!timesheetDatasets.length) return null;
@@ -1129,5 +1142,8 @@ function scopeSummary(data) {
   const duplicateText = Number(data.duplicates_removed || 0)
     ? ` ${formatNumber(data.duplicates_removed)} duplicate rows excluded.`
     : " No duplicate rows found.";
-  return `${scope}: ${formatNumber(data.unique_records)} unique records from ${formatNumber(data.raw_records)} raw rows across ${formatNumber(data.dataset_count)} dataset${Number(data.dataset_count) === 1 ? "" : "s"}.${duplicateText}`;
+  const refreshText = data.refreshed_at
+    ? ` Dashboard rollup refreshed ${new Date(data.refreshed_at).toLocaleString()}.`
+    : "";
+  return `${scope}: ${formatNumber(data.unique_records)} unique records from ${formatNumber(data.raw_records)} raw rows across ${formatNumber(data.dataset_count)} dataset${Number(data.dataset_count) === 1 ? "" : "s"}.${duplicateText}${refreshText}`;
 }
