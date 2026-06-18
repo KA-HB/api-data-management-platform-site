@@ -417,11 +417,11 @@ function maxDate(values) {
 }
 
 async function rawQbRollupFallback(payload, cachedData, cachedError) {
-  if (!AUTOMATIC_RAW_ROLLUP_FALLBACK) return null;
   if (cachedError || !availableDatasets.length) return null;
   const timesheetDatasets = rawTimesheetDatasets(payload);
   if (!timesheetDatasets.length) return null;
   const cachedEnd = cachedData?.date_end;
+  if (!AUTOMATIC_RAW_ROLLUP_FALLBACK && !cachedEnd) return null;
   if (cachedEnd && payload.end_date && String(payload.end_date) <= String(cachedEnd)) return null;
   if (cachedEnd && !(await hasNewerRawTimesheets(timesheetDatasets, cachedEnd))) return null;
 
@@ -1139,11 +1139,14 @@ function scopeSummary(data) {
     return `Showing ${formatNumber(data.unique_records)} records across ${formatNumber(data.dataset_count)} dataset${Number(data.dataset_count) === 1 ? "" : "s"} from dataset metadata. Experience totals will update after the dashboard rollup finishes refreshing.`;
   }
   const scope = data.dataset_name || "All authorized datasets";
+  const sourceText = data.is_raw_delta_fallback
+    ? " Cached dashboard rollup was extended with newer synced QuickBooks Time rows."
+    : "";
   const duplicateText = Number(data.duplicates_removed || 0)
     ? ` ${formatNumber(data.duplicates_removed)} duplicate rows excluded.`
     : " No duplicate rows found.";
   const refreshText = data.refreshed_at
     ? ` Dashboard rollup refreshed ${new Date(data.refreshed_at).toLocaleString()}.`
     : "";
-  return `${scope}: ${formatNumber(data.unique_records)} unique records from ${formatNumber(data.raw_records)} raw rows across ${formatNumber(data.dataset_count)} dataset${Number(data.dataset_count) === 1 ? "" : "s"}.${duplicateText}${refreshText}`;
+  return `${scope}: ${formatNumber(data.unique_records)} unique records from ${formatNumber(data.raw_records)} raw rows across ${formatNumber(data.dataset_count)} dataset${Number(data.dataset_count) === 1 ? "" : "s"}.${duplicateText}${sourceText}${refreshText}`;
 }

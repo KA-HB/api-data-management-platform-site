@@ -253,21 +253,26 @@ async function syncResourceDataset(
     }).select("id,record_count").single();
   if (datasetError) throw datasetError;
 
+  if (resource.useDateRange) {
+    const { start: configuredStart, end } = configuredDateWindow();
+    const latestWorkDate = await latestDatasetWorkDate(supabase, dataset.id);
+    const overlapDays = Math.max(Number(Deno.env.get("QB_TIME_INCREMENTAL_OVERLAP_DAYS") || "7"), 0);
+    const catchupStart = latestWorkDate
+      ? maxDate(subtractUtcDays(new Date(`${latestWorkDate}T00:00:00Z`), overlapDays), configuredStart)
+      : configuredStart;
+    const rows = await fetchDateWindowRowsInChunks(resource.endpoint, accessToken, catchupStart, end, perPage, maxPages);
+    await upsertDatasetRows(supabase, dataset.id, rows);
+    const total = await countDatasetRecords(supabase, dataset.id);
+    await supabase.from("datasets").update({ record_count: total }).eq("id", dataset.id);
+    return total;
+  }
+
   const savedCount = resource.useDateRange ? Number(dataset.record_count || 0) : 0;
   let page = Math.floor(savedCount / perPage) + 1;
   let total = savedCount;
   let pagesProcessed = 0;
   let moreAvailable = false;
   let reachedPageCap = false;
-
-  if (resource.useDateRange) {
-    const { end } = configuredDateWindow();
-    const recentDays = Math.max(Number(Deno.env.get("QB_TIME_RECENT_SYNC_DAYS") || "21"), 1);
-    const recentStart = new Date(end);
-    recentStart.setUTCDate(recentStart.getUTCDate() - recentDays);
-    const recentRows = await fetchDateWindowRows(resource.endpoint, accessToken, recentStart, end, perPage, maxPages);
-    await upsertDatasetRows(supabase, dataset.id, recentRows);
-  }
 
   while (page <= maxPages && pagesProcessed < pagesPerRun) {
     const url = new URL(`${base}/${resource.endpoint}`);
@@ -302,6 +307,19 @@ async function syncResourceDataset(
   return total;
 }
 
+async function latestDatasetWorkDate(supabase: ReturnType<typeof serviceClient>, datasetId: string) {
+  const { data, error } = await supabase
+    .from("records")
+    .select("work_date")
+    .eq("dataset_id", datasetId)
+    .not("work_date", "is", null)
+    .order("work_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.work_date || null;
+}
+
 function configuredDateWindow() {
   const configuredStart = Deno.env.get("QB_TIME_SYNC_START_DATE");
   const configuredEnd = Deno.env.get("QB_TIME_SYNC_END_DATE");
@@ -312,6 +330,37 @@ function configuredDateWindow() {
 
 function dateParam(date: Date) {
   return date.toISOString().slice(0, 10);
+}
+
+function subtractUtcDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() - days);
+  return next;
+}
+
+function addUtcDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function maxDate(left: Date, right: Date) {
+  return left.getTime() > right.getTime() ? left : right;
+}
+
+function minDate(left: Date, right: Date) {
+  return left.getTime() < right.getTime() ? left : right;
+}
+
+async function fetchDateWindowRowsInChunks(resource: string, accessToken: string, start: Date, end: Date, perPage: number, maxPages: number) {
+  const rows: unknown[] = [];
+  const windowDays = Math.max(Number(Deno.env.get("QB_TIME_SYNC_WINDOW_DAYS") || "31"), 1);
+  for (let cursor = new Date(start); cursor.getTime() <= end.getTime(); cursor = addUtcDays(cursor, windowDays)) {
+    const chunkEnd = minDate(addUtcDays(cursor, windowDays - 1), end);
+    const chunkRows = await fetchDateWindowRows(resource, accessToken, cursor, chunkEnd, perPage, maxPages);
+    rows.push(...chunkRows);
+  }
+  return rows;
 }
 
 async function fetchDateWindowRows(resource: string, accessToken: string, start: Date, end: Date, perPage: number, maxPages: number) {
