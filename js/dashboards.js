@@ -422,12 +422,13 @@ async function rawQbRollupFallback(payload, cachedData, cachedError) {
   const timesheetDatasets = rawTimesheetDatasets(payload);
   if (!timesheetDatasets.length) return null;
   const cachedEnd = cachedData?.date_end;
-  if (!AUTOMATIC_RAW_ROLLUP_FALLBACK && !cachedEnd) return null;
-  if (cachedEnd && payload.end_date && String(payload.end_date) <= String(cachedEnd)) return null;
-  if (cachedEnd && !(await hasNewerRawTimesheets(timesheetDatasets, cachedEnd))) return null;
+  const rebuildForBadJobcodes = hasPoorJobcodeCoverage(cachedData);
+  if (!AUTOMATIC_RAW_ROLLUP_FALLBACK && !cachedEnd && !rebuildForBadJobcodes) return null;
+  if (!rebuildForBadJobcodes && cachedEnd && payload.end_date && String(payload.end_date) <= String(cachedEnd)) return null;
+  if (!rebuildForBadJobcodes && cachedEnd && !(await hasNewerRawTimesheets(timesheetDatasets, cachedEnd))) return null;
 
   try {
-    const fallbackPayload = deltaFallbackPayload(payload, cachedEnd);
+    const fallbackPayload = rebuildForBadJobcodes ? payload : deltaFallbackPayload(payload, cachedEnd);
     if (fallbackPayload.start_date && fallbackPayload.end_date && String(fallbackPayload.start_date) > String(fallbackPayload.end_date)) return null;
     const [employeeRows, jobcodeRows, timesheetRows] = await Promise.all([
       fetchRawDatasetRows("QuickBooks Time Employees", "id,json_data"),
@@ -436,15 +437,27 @@ async function rawQbRollupFallback(payload, cachedData, cachedError) {
     ]);
     if (!timesheetRows.length) return null;
     const deltaRollup = buildRawQbRollup(timesheetRows, employeeRows, jobcodeRows, fallbackPayload, timesheetDatasets);
-    const data = cachedData && cachedEnd
+    const data = cachedData && cachedEnd && !rebuildForBadJobcodes
       ? mergeQbRollupData([cachedData, deltaRollup])
       : deltaRollup;
-    data.is_raw_delta_fallback = Boolean(cachedData && cachedEnd);
+    data.is_raw_delta_fallback = Boolean(cachedData && cachedEnd && !rebuildForBadJobcodes);
+    data.is_raw_rebuild_fallback = rebuildForBadJobcodes;
     return { data, error: null };
   } catch (error) {
     console.warn("Raw QuickBooks Time dashboard fallback failed", error);
     return null;
   }
+}
+
+function hasPoorJobcodeCoverage(data) {
+  if (!data) return false;
+  const detailRows = data.experience_rows || [];
+  const jobRows = data.hours_by_jobcode || [];
+  const badDetailRows = detailRows.filter((row) => !cleanJobcodeLabel(row.jobcode_level1) || !cleanJobcodeLabel(row.jobcode_level2));
+  const jobHours = sumValues(jobRows, "hours");
+  const unassignedHours = sumValues(jobRows.filter((row) => !isDisplayJobcodeLabel(row.jobcode)), "hours");
+  return (detailRows.length >= 10 && badDetailRows.length / detailRows.length >= 0.35)
+    || (jobHours > 0 && unassignedHours / jobHours >= 0.35);
 }
 
 function deltaFallbackPayload(payload, cachedEnd) {
@@ -618,15 +631,17 @@ function buildJobcodeMap(rows) {
   for (const job of raw.values()) {
     const parent = job.parent_id ? raw.get(job.parent_id) : null;
     const grandparent = parent?.parent_id ? raw.get(parent.parent_id) : null;
+    const hasGrandparent = Boolean(grandparent);
+    const hasParent = Boolean(parent);
     paths.set(job.id, {
       id: job.id,
       name: job.name,
-      level1_id: grandparent?.id || parent?.id || job.id,
-      level1_name: grandparent?.name || parent?.name || job.name,
-      level2_id: grandparent ? parent?.id : null,
-      level2_name: grandparent ? parent?.name : null,
-      level3_id: grandparent ? job.id : null,
-      level3_name: grandparent ? job.name : null,
+      level1_id: hasGrandparent ? grandparent.id : hasParent ? parent.id : job.id,
+      level1_name: hasGrandparent ? grandparent.name : hasParent ? parent.name : job.name,
+      level2_id: hasGrandparent ? parent?.id : hasParent ? job.id : null,
+      level2_name: hasGrandparent ? parent?.name : hasParent ? job.name : null,
+      level3_id: hasGrandparent ? job.id : null,
+      level3_name: hasGrandparent ? job.name : null,
     });
   }
   return paths;
@@ -734,18 +749,15 @@ function buildEmployeeExperience(rows) {
 function aggregateExperienceRows(rows) {
   const totals = new Map();
   for (const row of rows) {
-    const jobcodeLevel1 = displayJobcodeLabel(row.jobcode_level1);
-    const jobcodeLevel2 = displayJobcodeLabel(row.jobcode_level2);
-    const jobcodeLevel3 = displayJobcodeLabel(row.jobcode_level3);
-    const jobcode = displayJobcodeLabel(row.jobcode);
-    const serviceItem = displayServiceLabel(row.service_item);
-    const key = [row.employee, jobcodeLevel1, jobcodeLevel2, jobcodeLevel3, jobcode, serviceItem].join("|");
+    const normalized = normalizeExperienceDetailRow(row);
+    const serviceItem = displayServiceLabel(normalized.service_item);
+    const key = [normalized.employee, normalized.jobcode_level1, normalized.jobcode_level2, normalized.jobcode_level3, normalized.jobcode, serviceItem].join("|");
     const current = totals.get(key) || {
-      employee: row.employee,
-      jobcode_level1: jobcodeLevel1,
-      jobcode_level2: jobcodeLevel2,
-      jobcode_level3: jobcodeLevel3,
-      jobcode,
+      employee: normalized.employee,
+      jobcode_level1: normalized.jobcode_level1,
+      jobcode_level2: normalized.jobcode_level2,
+      jobcode_level3: normalized.jobcode_level3,
+      jobcode: normalized.jobcode,
       service_item: serviceItem,
       hours: 0,
       timesheets: 0,
@@ -769,21 +781,89 @@ function cleanEmployeeLabel(value) {
 function cleanJobcodeLabel(value) {
   const label = String(value || "").replace(/\s+/g, " ").trim();
   if (!label || label === "0" || /^[0-9]+$/.test(label)) return null;
+  if (/^(unassigned|not specified|no job code( [123])?)$/i.test(label)) return null;
   return label;
 }
 
-function displayJobcodeLabel(value) {
-  return cleanJobcodeLabel(value) || "Unassigned";
+function displayJobcodeLabel(value, fallback = "Unassigned") {
+  return cleanJobcodeLabel(value) || jobcodePathFromOptions(value).jobcode || fallback;
+}
+
+function jobcodePathFromOptions(value) {
+  const selected = String(value || "").trim();
+  if (!selected || !qbFilterOptions) return {};
+  const same = (candidate) => String(candidate || "").trim() === selected;
+  const label = (candidate) => cleanJobcodeLabel(candidate);
+  const level3 = (qbFilterOptions.jobcode_level3 || []).find((row) => same(row.id) || same(row.name));
+  if (level3) {
+    return {
+      level1: label(level3.grandparent_name) || label(level3.grandparent_id),
+      level2: label(level3.parent_name) || label(level3.parent_id),
+      level3: label(level3.name),
+      jobcode: label(level3.name) || label(level3.parent_name) || label(level3.grandparent_name),
+    };
+  }
+  const level2 = (qbFilterOptions.jobcode_level2 || []).find((row) => same(row.id) || same(row.name));
+  if (level2) {
+    return {
+      level1: label(level2.parent_name) || label(level2.parent_id),
+      level2: label(level2.name),
+      jobcode: label(level2.name) || label(level2.parent_name),
+    };
+  }
+  const level1 = (qbFilterOptions.jobcode_level1 || []).find((row) => same(row.id) || same(row.name));
+  if (level1) return { level1: label(level1.name), jobcode: label(level1.name) };
+  return {};
+}
+
+function mergeJobcodePath(base, next) {
+  return {
+    level1: base.level1 || next.level1,
+    level2: base.level2 || next.level2,
+    level3: base.level3 || next.level3,
+    jobcode: base.jobcode || next.jobcode,
+  };
+}
+
+function splitJobcodePath(value) {
+  return String(value || "")
+    .split("/")
+    .map((part) => cleanJobcodeLabel(part))
+    .filter(Boolean);
+}
+
+function normalizeExperienceDetailRow(row = {}) {
+  const pathValues = [
+    row.jobcode_level3_id,
+    row.jobcode_level3,
+    row.jobcode_level2_id,
+    row.jobcode_level2,
+    row.jobcode_level1_id,
+    row.jobcode_level1,
+    row.jobcode_id,
+    row.jobcode,
+  ];
+  const optionPath = pathValues.reduce((path, value) => mergeJobcodePath(path, jobcodePathFromOptions(value)), {});
+  const splitPath = splitJobcodePath(row.jobcode);
+  const level1 = cleanJobcodeLabel(row.jobcode_level1) || optionPath.level1 || splitPath[0] || null;
+  const level2 = cleanJobcodeLabel(row.jobcode_level2) || optionPath.level2 || splitPath[1] || null;
+  const level3 = cleanJobcodeLabel(row.jobcode_level3) || optionPath.level3 || splitPath[2] || null;
+  const jobcode = cleanJobcodeLabel(row.jobcode) || optionPath.jobcode || level3 || level2 || level1 || "Unassigned";
+  return {
+    ...row,
+    jobcode_level1: level1 || "Unassigned",
+    jobcode_level2: level2 || "Not specified",
+    jobcode_level3: level3 || "Not specified",
+    jobcode,
+    service_item: displayServiceLabel(row.service_item),
+  };
 }
 
 function detailJobcodeLabel(row, level) {
-  const level1 = cleanJobcodeLabel(row?.jobcode_level1);
-  const level2 = cleanJobcodeLabel(row?.jobcode_level2);
-  const level3 = cleanJobcodeLabel(row?.jobcode_level3);
-  const jobcode = cleanJobcodeLabel(row?.jobcode);
-  if (level === 1) return level1 || jobcode || "Unassigned job code";
-  if (level === 2) return level2 || (jobcode && jobcode !== level1 ? jobcode : "Not specified");
-  return level3 || (jobcode && jobcode !== level2 && jobcode !== level1 ? jobcode : "Not specified");
+  const normalized = normalizeExperienceDetailRow(row);
+  if (level === 1) return normalized.jobcode_level1;
+  if (level === 2) return normalized.jobcode_level2;
+  return normalized.jobcode_level3;
 }
 
 function cleanServiceLabel(value) {
@@ -1026,10 +1106,14 @@ function renderExperienceDetail(rows) {
 }
 
 function normalizeExperienceRollup(data = {}) {
+  const detailRows = (data.experience_rows || []).map(normalizeExperienceDetailRow).filter(hasNamedEmployee);
   const employeeRows = (data.employee_experience || data.hours_by_employee || []).filter(hasNamedEmployee);
-  const detailRows = (data.experience_rows || []).filter(hasNamedEmployee);
-  const serviceRows = data.hours_by_service_item || [];
-  const jobRows = normalizeProjectHours(data.hours_by_jobcode || []);
+  const serviceRows = (data.hours_by_service_item || []).map((row) => ({ ...row, service_item: displayServiceLabel(row.service_item) }));
+  const rawJobRows = normalizeProjectHours(data.hours_by_jobcode || []);
+  const detailJobRows = normalizeProjectHours(detailRows.map((row) => ({ jobcode: row.jobcode_level1, hours: row.hours })));
+  const rawJobHours = sumValues(rawJobRows, "hours");
+  const rawUnassignedHours = sumValues(rawJobRows.filter((row) => !isDisplayJobcodeLabel(row.jobcode)), "hours");
+  const jobRows = rawJobRows.length && rawJobHours && rawUnassignedHours / rawJobHours < 0.25 ? rawJobRows : detailJobRows;
   const dayRows = data.hours_by_day || [];
   const employeeNames = distinctValues([...employeeRows, ...detailRows], "employee");
   const serviceNames = distinctValues([...serviceRows, ...detailRows], "service_item").filter((name) => displayServiceLabel(name) !== "No service item");
@@ -1073,6 +1157,8 @@ function normalizeProjectHours(rows) {
 
 function projectLabel(value) {
   const raw = String(value || "").trim();
+  const optionPath = jobcodePathFromOptions(raw);
+  if (optionPath.level1) return optionPath.level1;
   if (!cleanJobcodeLabel(raw)) return "Unassigned";
   const options = qbFilterOptions || {};
   const level1 = options.jobcode_level1 || [];
