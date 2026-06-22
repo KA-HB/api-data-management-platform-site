@@ -21,6 +21,7 @@ function bindEvents() {
   $("#export-anomalies")?.addEventListener("click", exportCsv);
   $("#filter-dataset")?.addEventListener("change", rerunIfReady);
   $("#filter-employee")?.addEventListener("change", rerunIfReady);
+  $("#filter-employee")?.addEventListener("input", debounce(rerunIfReady, 350));
   $("#filter-start")?.addEventListener("change", rerunIfReady);
   $("#filter-end")?.addEventListener("change", rerunIfReady);
   $("#filter-service-item")?.addEventListener("change", rerunIfReady);
@@ -71,7 +72,7 @@ async function runDetection(event = null) {
 function filterPayload() {
   return {
     keyword_filter: $("#filter-keyword")?.value.trim() || null,
-    employee_filter: $("#filter-employee")?.value || null,
+    employee_filter: $("#filter-employee")?.value.trim() || null,
     start_date: $("#filter-start")?.value || null,
     end_date: $("#filter-end")?.value || null,
     jobcode_level1_filter: $("#filter-jobcode-1")?.value || null,
@@ -105,9 +106,9 @@ function renderAnomalies(data) {
     (r) => `<span class="status ${severityClass(r.severity)}">${escapeHtml(priorityLabel(r.severity))}</span>`,
     (r) => escapeHtml(r.employee),
     (r) => escapeHtml(r.reason),
-    (r) => escapeHtml(r.jobcode_level1 || "-"),
-    (r) => escapeHtml(r.jobcode_level2 || "-"),
-    (r) => escapeHtml(r.jobcode_level3 || r.jobcode || "-"),
+    (r) => escapeHtml(cleanJobcodeLabel(r.jobcode_level1) || "-"),
+    (r) => escapeHtml(cleanJobcodeLabel(r.jobcode_level2) || "-"),
+    (r) => escapeHtml(cleanJobcodeLabel(r.jobcode_level3) || cleanJobcodeLabel(r.jobcode) || "-"),
     (r) => escapeHtml(r.service_item || "No service item"),
     (r) => formatNumber(r.hours),
     (r) => formatNumber(r.timesheets),
@@ -119,10 +120,19 @@ function renderAnomalies(data) {
 }
 
 function populateQbFilters(options) {
-  fillSelect("#filter-employee", options.employees || [], "All employees", { hideNumericNames: true });
-  fillSelect("#filter-jobcode-1", options.jobcode_level1 || [], "All Job Code 1");
+  fillEmployeeOptions(options.employees || []);
+  fillSelect("#filter-jobcode-1", options.jobcode_level1 || [], "All Job Code 1", { hideNumericNames: true });
   fillSelect("#filter-service-item", (options.service_items || []).map((name) => ({ id: name, name })), "All service items");
   refreshDependentJobFilters();
+}
+
+function fillEmployeeOptions(rows) {
+  const list = $("#employee-options");
+  if (!list) return;
+  const cleanRows = (rows || []).filter((row) => row?.id && row?.name && !/^\d+$/.test(String(row.name).trim()));
+  list.innerHTML = cleanRows
+    .map((row) => `<option value="${escapeHtml(row.name)}" label="${escapeHtml(row.id)}"></option>`)
+    .join("");
 }
 
 function refreshDependentJobFilters() {
@@ -130,7 +140,7 @@ function refreshDependentJobFilters() {
   const selectedLevel1 = $("#filter-jobcode-1")?.value || "";
   const selectedLevel2 = $("#filter-jobcode-2")?.value || "";
   const level2 = (filterOptions.jobcode_level2 || []).filter((row) => !selectedLevel1 || row.parent_id === selectedLevel1);
-  fillSelect("#filter-jobcode-2", level2, "All Job Code 2");
+  fillSelect("#filter-jobcode-2", level2, "All Job Code 2", { hideNumericNames: true });
   if (selectedLevel2 && level2.some((row) => row.id === selectedLevel2)) $("#filter-jobcode-2").value = selectedLevel2;
   const nextLevel2 = $("#filter-jobcode-2")?.value || "";
   const level3 = (filterOptions.jobcode_level3 || []).filter((row) => {
@@ -138,16 +148,22 @@ function refreshDependentJobFilters() {
     if (selectedLevel1) return row.grandparent_id === selectedLevel1;
     return true;
   });
-  fillSelect("#filter-jobcode-3", level3, "All Job Code 3");
+  fillSelect("#filter-jobcode-3", level3, "All Job Code 3", { hideNumericNames: true });
 }
 
 function fillSelect(selector, rows, placeholder, { hideNumericNames = false } = {}) {
   const select = $(selector);
   if (!select) return;
   const current = select.value;
-  const cleanRows = (rows || []).filter((row) => row?.id && row?.name && (!hideNumericNames || !/^\d+$/.test(String(row.name).trim())));
+  const cleanRows = (rows || []).filter((row) => row?.id && row?.name && (!hideNumericNames || cleanJobcodeLabel(row.name)));
   select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${cleanRows.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}</option>`).join("")}`;
   if (current && cleanRows.some((row) => row.id === current)) select.value = current;
+}
+
+function cleanJobcodeLabel(value) {
+  const label = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!label || label === '0' || /^[0-9]+$/.test(label)) return null;
+  return label;
 }
 
 function renderChart(selector, type, rows, labelKey, valueKey, label) {

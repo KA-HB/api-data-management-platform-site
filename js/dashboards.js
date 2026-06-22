@@ -34,6 +34,7 @@ if (profile) {
       loadQbVisuals();
     });
     $("#filter-employee")?.addEventListener("change", loadQbVisuals);
+    $("#filter-employee")?.addEventListener("input", debounce(loadQbVisuals, 350));
     $("#filter-start")?.addEventListener("change", loadQbVisuals);
     $("#filter-end")?.addEventListener("change", loadQbVisuals);
     $("#filter-service-item")?.addEventListener("change", loadQbVisuals);
@@ -324,7 +325,7 @@ function mergeQbRollupData(results) {
   merged.filtered_hours = roundValue(sumResults(results, "filtered_hours"));
   merged.filtered_employees = distinctValues(merged.employee_experience, "employee").length;
   merged.filtered_service_items = distinctValues(merged.hours_by_service_item, "service_item").filter((name) => name && name !== "No service item").length;
-  merged.filtered_jobcodes = distinctValues(merged.experience_rows, "jobcode").filter((name) => name && name !== "Unassigned").length || distinctValues(merged.hours_by_jobcode, "jobcode").length;
+  merged.filtered_jobcodes = distinctValues(merged.experience_rows, "jobcode").filter(isDisplayJobcodeLabel).length || distinctValues(merged.hours_by_jobcode, "jobcode").filter(isDisplayJobcodeLabel).length;
   merged.raw_records = sumResults(results, "raw_records") || merged.filtered_timesheets;
   merged.unique_records = sumResults(results, "unique_records") || merged.filtered_timesheets;
   merged.duplicates_removed = sumResults(results, "duplicates_removed");
@@ -610,7 +611,7 @@ function buildJobcodeMap(rows) {
     raw.set(id, {
       id,
       parent_id: String(data.parent_id || "").trim() && String(data.parent_id) !== "0" ? String(data.parent_id) : null,
-      name: String(data.name || data.short_code || id).trim(),
+      name: cleanJobcodeLabel(data.name) || cleanJobcodeLabel(data.short_code),
     });
   }
   const paths = new Map();
@@ -645,10 +646,10 @@ function rawExperienceRow(row, employees, jobcodes) {
     || "Unassigned";
   if (!employee || /^[0-9]+$/.test(employee)) return null;
   const jobPath = jobcodes.get(String(data.jobcode_id || "").trim());
-  const level1 = String(data.jobcode_1 || jobPath?.level1_name || "").trim();
-  const level2 = String(data.jobcode_2 || jobPath?.level2_name || "").trim();
-  const level3 = String(data.jobcode_3 || jobPath?.level3_name || "").trim();
-  const jobcode = level3 || level2 || level1 || String(data.jobcode_name || jobPath?.name || data.name || data.short_code || data.jobcode_id || "Unassigned").trim();
+  const level1 = cleanJobcodeLabel(jobPath?.level1_name) || cleanJobcodeLabel(data.jobcode_1) || "";
+  const level2 = cleanJobcodeLabel(jobPath?.level2_name) || cleanJobcodeLabel(data.jobcode_2) || "";
+  const level3 = cleanJobcodeLabel(jobPath?.level3_name) || cleanJobcodeLabel(data.jobcode_3) || "";
+  const jobcode = level3 || level2 || level1 || cleanJobcodeLabel(data.jobcode_name) || cleanJobcodeLabel(jobPath?.name) || cleanJobcodeLabel(data.name) || cleanJobcodeLabel(data.short_code) || "Unassigned";
   return {
     record_id: row.id,
     dataset_id: row.dataset_id,
@@ -672,7 +673,7 @@ function rawExperienceRow(row, employees, jobcodes) {
 
 function rawExperienceMatches(row, payload) {
   const keyword = String(payload.keyword_filter || "").trim().toLowerCase();
-  if (payload.employee_filter && !(row.employee_id === payload.employee_filter || row.employee.toLowerCase().includes(String(payload.employee_filter).toLowerCase()))) return false;
+  if (payload.employee_filter && !matchesEmployeeSearch(row.employee, row.employee_id, payload.employee_filter)) return false;
   if (payload.jobcode_level1_filter && !matchesJobFilter(row, payload.jobcode_level1_filter, ["jobcode_level1", "jobcode_level1_id", "jobcode"])) return false;
   if (payload.jobcode_level2_filter && !matchesJobFilter(row, payload.jobcode_level2_filter, ["jobcode_level2", "jobcode_level2_id", "jobcode"])) return false;
   if (payload.jobcode_level3_filter && !matchesJobFilter(row, payload.jobcode_level3_filter, ["jobcode_level3", "jobcode_level3_id", "jobcode"])) return false;
@@ -680,9 +681,19 @@ function rawExperienceMatches(row, payload) {
   if (!keyword) return true;
   return row.search_text.includes(keyword)
     || row.dataset_name.toLowerCase().includes(keyword)
-    || row.employee.toLowerCase().includes(keyword)
+    || matchesEmployeeSearch(row.employee, row.employee_id, keyword)
     || row.jobcode.toLowerCase().includes(keyword)
     || row.service_item.toLowerCase().includes(keyword);
+}
+
+function matchesEmployeeSearch(employee, employeeId, query) {
+  const term = String(query || "").trim().toLowerCase();
+  if (!term) return true;
+  if (String(employeeId || "").trim().toLowerCase() === term) return true;
+  const name = String(employee || "").trim().toLowerCase();
+  if (!name) return false;
+  if (name.includes(term)) return true;
+  return term.split(/\s+/).filter(Boolean).every((token) => name.includes(token));
 }
 
 function matchesJobFilter(row, filter, keys) {
@@ -712,7 +723,7 @@ function buildEmployeeExperience(rows) {
       employee: row.key,
       hours: row.hours,
       timesheets: row.timesheets,
-      jobcodes: distinctValues(matches, "jobcode").filter((value) => value !== "Unassigned").length,
+      jobcodes: distinctValues(matches, "jobcode").filter(isDisplayJobcodeLabel).length,
       service_items: distinctValues(matches, "service_item").filter((value) => value !== "No service item").length,
       first_work: minDate(matches.map((detail) => detail.work_date)),
       last_work: maxDate(matches.map((detail) => detail.work_date)),
@@ -723,13 +734,17 @@ function buildEmployeeExperience(rows) {
 function aggregateExperienceRows(rows) {
   const totals = new Map();
   for (const row of rows) {
-    const key = [row.employee, row.jobcode_level1, row.jobcode_level2, row.jobcode_level3, row.jobcode, row.service_item].join("|");
+    const jobcodeLevel1 = displayJobcodeLabel(row.jobcode_level1);
+    const jobcodeLevel2 = displayJobcodeLabel(row.jobcode_level2);
+    const jobcodeLevel3 = displayJobcodeLabel(row.jobcode_level3);
+    const jobcode = displayJobcodeLabel(row.jobcode);
+    const key = [row.employee, jobcodeLevel1, jobcodeLevel2, jobcodeLevel3, jobcode, row.service_item].join("|");
     const current = totals.get(key) || {
       employee: row.employee,
-      jobcode_level1: row.jobcode_level1,
-      jobcode_level2: row.jobcode_level2,
-      jobcode_level3: row.jobcode_level3,
-      jobcode: row.jobcode,
+      jobcode_level1: jobcodeLevel1,
+      jobcode_level2: jobcodeLevel2,
+      jobcode_level3: jobcodeLevel3,
+      jobcode,
       service_item: row.service_item,
       hours: 0,
       timesheets: 0,
@@ -748,6 +763,16 @@ function aggregateExperienceRows(rows) {
 function cleanEmployeeLabel(value) {
   const label = String(value || "").replace(/\s+/g, " ").trim();
   return label && !/^[0-9]+$/.test(label) ? label : null;
+}
+
+function cleanJobcodeLabel(value) {
+  const label = String(value || "").replace(/\s+/g, " ").trim();
+  if (!label || label === "0" || /^[0-9]+$/.test(label)) return null;
+  return label;
+}
+
+function displayJobcodeLabel(value) {
+  return cleanJobcodeLabel(value) || "Unassigned";
 }
 
 async function callSearchSummary() {
@@ -813,7 +838,7 @@ function qbFilterPayload() {
   return {
     dataset_uuid: $("#filter-dataset")?.value || null,
     keyword_filter: $("#filter-keyword")?.value.trim() || null,
-    employee_filter: $("#filter-employee")?.value || null,
+    employee_filter: $("#filter-employee")?.value.trim() || null,
     start_date: $("#filter-start")?.value || null,
     end_date: $("#filter-end")?.value || null,
     jobcode_level1_filter: $("#filter-jobcode-1")?.value || null,
@@ -830,7 +855,7 @@ function searchSummaryPayload() {
     search_term: $("#filter-keyword")?.value.trim() || null,
     start_date: dateTimeValue("#filter-start"),
     end_date: dateTimeValue("#filter-end", true),
-    employee_filter: $("#filter-employee")?.value || null,
+    employee_filter: $("#filter-employee")?.value.trim() || null,
     jobcode_filter: jobcodeFilter,
     service_item_filter: $("#filter-service-item")?.value || null,
   };
@@ -844,10 +869,19 @@ function clearQbFilters() {
 }
 
 function populateQbFilters(options) {
-  fillSelect("#filter-employee", options.employees || [], "All employees");
-  fillSelect("#filter-jobcode-1", options.jobcode_level1 || [], "All Job Code 1");
+  fillEmployeeOptions(options.employees || []);
+  fillSelect("#filter-jobcode-1", options.jobcode_level1 || [], "All Job Code 1", { hideNumericNames: true });
   fillSelect("#filter-service-item", (options.service_items || []).map((name) => ({ id: name, name })), "All service items");
   refreshDependentJobFilters();
+}
+
+function fillEmployeeOptions(rows) {
+  const list = $("#employee-options");
+  if (!list) return;
+  const cleanRows = (rows || []).filter((row) => row?.id && row?.name && !/^\d+$/.test(String(row.name).trim()));
+  list.innerHTML = cleanRows
+    .map((row) => `<option value="${escapeHtml(row.name)}" label="${escapeHtml(row.id)}"></option>`)
+    .join("");
 }
 
 function updateDatasetIndicator() {
@@ -869,7 +903,7 @@ function refreshDependentJobFilters() {
   const selectedLevel2 = $("#filter-jobcode-2")?.value || "";
   const selectedLevel3 = $("#filter-jobcode-3")?.value || "";
   const level2 = (qbFilterOptions.jobcode_level2 || []).filter((row) => !selectedLevel1 || row.parent_id === selectedLevel1);
-  fillSelect("#filter-jobcode-2", level2, "All Job Code 2");
+  fillSelect("#filter-jobcode-2", level2, "All Job Code 2", { hideNumericNames: true });
   if (selectedLevel2 && level2.some((row) => row.id === selectedLevel2)) $("#filter-jobcode-2").value = selectedLevel2;
 
   const nextLevel2 = $("#filter-jobcode-2")?.value || "";
@@ -878,16 +912,17 @@ function refreshDependentJobFilters() {
     if (selectedLevel1) return row.grandparent_id === selectedLevel1;
     return true;
   });
-  fillSelect("#filter-jobcode-3", level3, "All Job Code 3");
+  fillSelect("#filter-jobcode-3", level3, "All Job Code 3", { hideNumericNames: true });
   if (selectedLevel3 && level3.some((row) => row.id === selectedLevel3)) $("#filter-jobcode-3").value = selectedLevel3;
 }
 
-function fillSelect(selector, rows, placeholder) {
+function fillSelect(selector, rows, placeholder, { hideNumericNames = false } = {}) {
   const select = $(selector);
   if (!select) return;
   const current = select.value;
-  select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${rows.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}</option>`).join("")}`;
-  if (current && rows.some((row) => row.id === current)) select.value = current;
+  const cleanRows = (rows || []).filter((row) => row?.id && row?.name && (!hideNumericNames || cleanJobcodeLabel(row.name)));
+  select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${cleanRows.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}</option>`).join("")}`;
+  if (current && cleanRows.some((row) => row.id === current)) select.value = current;
 }
 
 function renderChart(selector, type, rows, labelKey, valueKey, label) {
@@ -960,9 +995,9 @@ function renderExperienceDetail(rows) {
   setText("#experience-detail-summary", rows.length ? `${formatNumber(rows.length)} employee, job, and service combinations` : "No matching experience rows");
   renderRows($("#experience-detail-body"), rows, [
     (r) => escapeHtml(r.employee),
-    (r) => escapeHtml(r.jobcode_level1 || "-"),
-    (r) => escapeHtml(r.jobcode_level2 || "-"),
-    (r) => escapeHtml(r.jobcode_level3 || r.jobcode || "-"),
+    (r) => escapeHtml(cleanJobcodeLabel(r.jobcode_level1) || "-"),
+    (r) => escapeHtml(cleanJobcodeLabel(r.jobcode_level2) || "-"),
+    (r) => escapeHtml(cleanJobcodeLabel(r.jobcode_level3) || cleanJobcodeLabel(r.jobcode) || "-"),
     (r) => escapeHtml(r.service_item || "No service item"),
     (r) => formatNumber(r.hours),
     (r) => `${formatDate(r.first_work)} - ${formatDate(r.last_work)}`,
@@ -1007,7 +1042,7 @@ function normalizeProjectHours(rows) {
   const totals = new Map();
   for (const row of rows || []) {
     const project = projectLabel(row.jobcode);
-    totals.set(project, (totals.get(project) || 0) + numeric(row.hours));
+    if (isDisplayJobcodeLabel(project)) totals.set(project, (totals.get(project) || 0) + numeric(row.hours));
   }
   return Array.from(totals.entries())
     .map(([jobcode, hours]) => ({ jobcode, hours }))
@@ -1017,19 +1052,24 @@ function normalizeProjectHours(rows) {
 
 function projectLabel(value) {
   const raw = String(value || "").trim();
-  if (!raw) return "Unassigned";
+  if (!cleanJobcodeLabel(raw)) return "Unassigned";
   const options = qbFilterOptions || {};
   const level1 = options.jobcode_level1 || [];
   const level2 = options.jobcode_level2 || [];
   const level3 = options.jobcode_level3 || [];
   const directLevel1 = level1.find((row) => row.id === raw || row.name === raw);
-  if (directLevel1) return directLevel1.name;
+  if (directLevel1) return cleanJobcodeLabel(directLevel1.name) || "Unassigned";
   const directLevel2 = level2.find((row) => row.id === raw || row.name === raw);
-  if (directLevel2) return directLevel2.parent_name || directLevel2.parent_id || directLevel2.name;
+  if (directLevel2) return cleanJobcodeLabel(directLevel2.parent_name) || cleanJobcodeLabel(directLevel2.name) || "Unassigned";
   const directLevel3 = level3.find((row) => row.id === raw || row.name === raw);
-  if (directLevel3) return directLevel3.grandparent_name || directLevel3.grandparent_id || directLevel3.parent_name || directLevel3.name;
-  const firstPathPart = raw.split("/").map((part) => part.trim()).find(Boolean);
-  return firstPathPart || raw;
+  if (directLevel3) return cleanJobcodeLabel(directLevel3.grandparent_name) || cleanJobcodeLabel(directLevel3.parent_name) || cleanJobcodeLabel(directLevel3.name) || "Unassigned";
+  const firstPathPart = raw.split("/").map((part) => cleanJobcodeLabel(part)).find(Boolean);
+  return firstPathPart || cleanJobcodeLabel(raw) || "Unassigned";
+}
+
+function isDisplayJobcodeLabel(value) {
+  const label = cleanJobcodeLabel(value);
+  return Boolean(label && label !== "Unassigned");
 }
 
 function renderRecentUploads(rows) {

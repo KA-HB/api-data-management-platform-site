@@ -297,7 +297,7 @@ function renderRelevantFields(row) {
   const hours = hoursLabel(data);
   const fields = [
     ["Employee", employeeName(data)],
-    ["Job/Project", jobPath(data) || fieldValue(data, ["jobcode_name", "name", "short_code", "jobcode_id", "project_id", "project_name"])],
+    ["Job/Project", jobPath(data) || cleanJobcodeLabel(fieldValue(data, ["jobcode_name", "name", "short_code", "project_id", "project_name"]))],
     ["Service", serviceItem(data)],
     ["Hours", hours],
     ["Status", fieldValue(data, ["state", "status"]) || activeLabel(data.active)],
@@ -309,7 +309,7 @@ function renderRelevantFields(row) {
 
 function renderRecordDetails(row) {
   const data = row.json_data || {};
-  const preview = fieldValue(data, ["notes", "description", "memo"]) || jobPath(data) || serviceItem(data) || employeeName(data) || fieldValue(data, ["company_name", "name", "id"]) || row.id;
+  const preview = fieldValue(data, ["notes", "description", "memo"]) || jobPath(data) || serviceItem(data) || employeeName(data) || cleanJobcodeLabel(fieldValue(data, ["company_name", "name"])) || row.id;
   return `<div>${escapeHtml(preview)}</div><details><summary>Raw JSON</summary><pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre></details>`;
 }
 
@@ -320,9 +320,9 @@ function recordDate(row) {
 
 function jobPath(data) {
   return uniqueValues([
-    fieldValue(data, ["jobcode_level1", "jobcode_1", "parent_jobcode_name"]),
-    fieldValue(data, ["jobcode_level2", "jobcode_2"]),
-    fieldValue(data, ["jobcode_level3", "jobcode_3", "jobcode_name", "name"]),
+    cleanJobcodeLabel(fieldValue(data, ["jobcode_level1", "jobcode_1", "parent_jobcode_name"])),
+    cleanJobcodeLabel(fieldValue(data, ["jobcode_level2", "jobcode_2"])),
+    cleanJobcodeLabel(fieldValue(data, ["jobcode_level3", "jobcode_3", "jobcode_name", "name"])),
   ])
     .join(" / ");
 }
@@ -358,6 +358,12 @@ function cleanDisplayName(value) {
   const normalized = String(value || "").trim();
   if (!normalized || normalized === "Unassigned" || /^[0-9]+$/.test(normalized)) return "";
   return normalized;
+}
+
+function cleanJobcodeLabel(value) {
+  const label = String(value || '').trim();
+  if (!label || label === '0' || /^[0-9]+$/.test(label)) return '';
+  return label;
 }
 
 function uniqueValues(values) {
