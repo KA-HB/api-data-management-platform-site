@@ -106,10 +106,10 @@ function renderAnomalies(data) {
     (r) => `<span class="status ${severityClass(r.severity)}">${escapeHtml(priorityLabel(r.severity))}</span>`,
     (r) => escapeHtml(r.employee),
     (r) => escapeHtml(r.reason),
-    (r) => escapeHtml(cleanJobcodeLabel(r.jobcode_level1) || "-"),
-    (r) => escapeHtml(cleanJobcodeLabel(r.jobcode_level2) || "-"),
-    (r) => escapeHtml(cleanJobcodeLabel(r.jobcode_level3) || cleanJobcodeLabel(r.jobcode) || "-"),
-    (r) => escapeHtml(r.service_item || "No service item"),
+    (r) => escapeHtml(detailJobcodeLabel(r, 1)),
+    (r) => escapeHtml(detailJobcodeLabel(r, 2)),
+    (r) => escapeHtml(detailJobcodeLabel(r, 3)),
+    (r) => escapeHtml(displayServiceLabel(r.service_item)),
     (r) => formatNumber(r.hours),
     (r) => formatNumber(r.timesheets),
     (r) => `${formatNumber(r.employee_hour_share)}%`,
@@ -164,6 +164,26 @@ function cleanJobcodeLabel(value) {
   const label = String(value || '').replace(/\s+/g, ' ').trim();
   if (!label || label === '0' || /^[0-9]+$/.test(label)) return null;
   return label;
+}
+
+function detailJobcodeLabel(row, level) {
+  const level1 = cleanJobcodeLabel(row?.jobcode_level1);
+  const level2 = cleanJobcodeLabel(row?.jobcode_level2);
+  const level3 = cleanJobcodeLabel(row?.jobcode_level3);
+  const jobcode = cleanJobcodeLabel(row?.jobcode);
+  if (level === 1) return level1 || jobcode || "Unassigned job code";
+  if (level === 2) return level2 || (jobcode && jobcode !== level1 ? jobcode : "Not specified");
+  return level3 || (jobcode && jobcode !== level2 && jobcode !== level1 ? jobcode : "Not specified");
+}
+
+function cleanServiceLabel(value) {
+  const label = String(value || "").replace(/\s+/g, " ").trim();
+  if (!label || /^null$/i.test(label) || /^undefined$/i.test(label)) return null;
+  return label;
+}
+
+function displayServiceLabel(value) {
+  return cleanServiceLabel(value) || "No service item";
 }
 
 function renderChart(selector, type, rows, labelKey, valueKey, label) {

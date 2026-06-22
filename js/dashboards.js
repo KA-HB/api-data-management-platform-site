@@ -555,7 +555,7 @@ function buildRawQbRollup(timesheetRows, employeeRows, jobcodeRows, payload, dat
     .map((row) => ({ employee: row.key, hours: row.hours, timesheets: row.timesheets }));
   const hoursByJobcode = aggregateRows(rows, (row) => row.jobcode_level1 || row.jobcode, { hours: "hours" })
     .map((row) => ({ jobcode: row.key, hours: row.hours }));
-  const hoursByService = aggregateRows(rows, (row) => row.service_item, { hours: "hours" })
+  const hoursByService = aggregateRows(rows, (row) => displayServiceLabel(row.service_item), { hours: "hours" })
     .map((row) => ({ service_item: row.key, hours: row.hours }));
   const hoursByDay = aggregateRows(rows, (row) => row.work_date, { hours: "hours" })
     .map((row) => ({ date: row.key, hours: row.hours }))
@@ -579,8 +579,8 @@ function buildRawQbRollup(timesheetRows, employeeRows, jobcodeRows, payload, dat
     filtered_timesheets: rows.length,
     filtered_hours: roundValue(sumValues(rows, "hours")),
     filtered_employees: distinctValues(rows, "employee").filter((value) => value !== "Unassigned" && !/^[0-9]+$/.test(value)).length,
-    filtered_jobcodes: distinctValues(rows, "jobcode").filter((value) => value !== "Unassigned").length,
-    filtered_service_items: distinctValues(rows, "service_item").filter((value) => value !== "No service item").length,
+    filtered_jobcodes: distinctValues(rows, "jobcode").filter(isDisplayJobcodeLabel).length,
+    filtered_service_items: distinctValues(rows, "service_item").filter((value) => displayServiceLabel(value) !== "No service item").length,
     raw_records: matchedRawCount,
     unique_records: rows.length,
     duplicates_removed: Math.max(matchedRawCount - rows.length, 0),
@@ -667,7 +667,7 @@ function rawExperienceRow(row, employees, jobcodes) {
     jobcode_level2_id: jobPath?.level2_id || "",
     jobcode_level3_id: jobPath?.level3_id || "",
     jobcode,
-    service_item: String(data.customfields?.["53105"] || data["service item"] || data.service_item || "No service item").trim() || "No service item",
+    service_item: displayServiceLabel(data.customfields?.["53105"] || data["service item"] || data.service_item),
   };
 }
 
@@ -738,14 +738,15 @@ function aggregateExperienceRows(rows) {
     const jobcodeLevel2 = displayJobcodeLabel(row.jobcode_level2);
     const jobcodeLevel3 = displayJobcodeLabel(row.jobcode_level3);
     const jobcode = displayJobcodeLabel(row.jobcode);
-    const key = [row.employee, jobcodeLevel1, jobcodeLevel2, jobcodeLevel3, jobcode, row.service_item].join("|");
+    const serviceItem = displayServiceLabel(row.service_item);
+    const key = [row.employee, jobcodeLevel1, jobcodeLevel2, jobcodeLevel3, jobcode, serviceItem].join("|");
     const current = totals.get(key) || {
       employee: row.employee,
       jobcode_level1: jobcodeLevel1,
       jobcode_level2: jobcodeLevel2,
       jobcode_level3: jobcodeLevel3,
       jobcode,
-      service_item: row.service_item,
+      service_item: serviceItem,
       hours: 0,
       timesheets: 0,
       first_work: row.work_date,
@@ -773,6 +774,26 @@ function cleanJobcodeLabel(value) {
 
 function displayJobcodeLabel(value) {
   return cleanJobcodeLabel(value) || "Unassigned";
+}
+
+function detailJobcodeLabel(row, level) {
+  const level1 = cleanJobcodeLabel(row?.jobcode_level1);
+  const level2 = cleanJobcodeLabel(row?.jobcode_level2);
+  const level3 = cleanJobcodeLabel(row?.jobcode_level3);
+  const jobcode = cleanJobcodeLabel(row?.jobcode);
+  if (level === 1) return level1 || jobcode || "Unassigned job code";
+  if (level === 2) return level2 || (jobcode && jobcode !== level1 ? jobcode : "Not specified");
+  return level3 || (jobcode && jobcode !== level2 && jobcode !== level1 ? jobcode : "Not specified");
+}
+
+function cleanServiceLabel(value) {
+  const label = String(value || "").replace(/\s+/g, " ").trim();
+  if (!label || /^null$/i.test(label) || /^undefined$/i.test(label)) return null;
+  return label;
+}
+
+function displayServiceLabel(value) {
+  return cleanServiceLabel(value) || "No service item";
 }
 
 async function callSearchSummary() {
@@ -995,10 +1016,10 @@ function renderExperienceDetail(rows) {
   setText("#experience-detail-summary", rows.length ? `${formatNumber(rows.length)} employee, job, and service combinations` : "No matching experience rows");
   renderRows($("#experience-detail-body"), rows, [
     (r) => escapeHtml(r.employee),
-    (r) => escapeHtml(cleanJobcodeLabel(r.jobcode_level1) || "-"),
-    (r) => escapeHtml(cleanJobcodeLabel(r.jobcode_level2) || "-"),
-    (r) => escapeHtml(cleanJobcodeLabel(r.jobcode_level3) || cleanJobcodeLabel(r.jobcode) || "-"),
-    (r) => escapeHtml(r.service_item || "No service item"),
+    (r) => escapeHtml(detailJobcodeLabel(r, 1)),
+    (r) => escapeHtml(detailJobcodeLabel(r, 2)),
+    (r) => escapeHtml(detailJobcodeLabel(r, 3)),
+    (r) => escapeHtml(displayServiceLabel(r.service_item)),
     (r) => formatNumber(r.hours),
     (r) => `${formatDate(r.first_work)} - ${formatDate(r.last_work)}`,
   ]);
@@ -1011,7 +1032,7 @@ function normalizeExperienceRollup(data = {}) {
   const jobRows = normalizeProjectHours(data.hours_by_jobcode || []);
   const dayRows = data.hours_by_day || [];
   const employeeNames = distinctValues([...employeeRows, ...detailRows], "employee");
-  const serviceNames = distinctValues([...serviceRows, ...detailRows], "service_item").filter((name) => name && name !== "No service item");
+  const serviceNames = distinctValues([...serviceRows, ...detailRows], "service_item").filter((name) => displayServiceLabel(name) !== "No service item");
   return {
     ...data,
     employee_experience: employeeRows,
