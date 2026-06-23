@@ -22,6 +22,7 @@ azureLogin?.addEventListener("click", async () => {
   const { error } = await supabase.auth.signInWithOAuth({
     provider: "azure",
     options: {
+      scopes: "email",
       redirectTo,
       queryParams: { prompt: "select_account" },
     },

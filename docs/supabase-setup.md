@@ -4,7 +4,7 @@
 
 Enable Microsoft Azure authentication in Supabase Auth and set the Azure application to the Hayat Brown tenant. Disable the Email provider in Supabase Auth so users cannot create password-based accounts.
 
-Supabase Auth redirect allow-list URLs should include the hosted `pages/auth-callback.html` URL. The app redirects authenticated users to the correct dashboard based on their `profiles.role`.
+Supabase Auth redirect allow-list URLs should include the hosted `pages/auth-callback.html` URL. The Azure OAuth request must include the `email` scope, because Supabase Auth requires Azure to return a valid email address. The app redirects authenticated users to the correct dashboard based on their `profiles.role`.
 
 ## Database
 
