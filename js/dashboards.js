@@ -24,6 +24,8 @@ if (profile) {
   renderShell(profile);
   await loadDatasets();
   await loadDashboard();
+  $("#project-experience-lookup")?.addEventListener("submit", searchProjectExperience);
+  $("#clear-project-experience")?.addEventListener("click", clearProjectExperienceLookup);
 
   if (profile.role === "admin") {
     $("#qb-viz-filters")?.addEventListener("submit", applyQbFilters);
@@ -196,6 +198,81 @@ function clearQbVisuals() {
   setText("#experience-detail-summary", "No matching experience rows");
   renderRows($("#employee-experience-body"), [], [() => ""]);
   renderRows($("#experience-detail-body"), [], [() => ""]);
+}
+
+async function searchProjectExperience(event) {
+  event.preventDefault();
+  const employee = $("#project-employee")?.value.trim() || "";
+  const jobcode1 = $("#project-jobcode-1")?.value.trim() || "";
+  const jobcode2 = $("#project-jobcode-2")?.value.trim() || "";
+  if (!employee && !jobcode1 && !jobcode2) {
+    toast("Enter an employee, Job Code 1, or Job Code 2 to search project experience.", "info");
+    return;
+  }
+
+  setProjectLookupLoading();
+  const payload = {
+    ...emptyQbPayload(),
+    employee_filter: employee || null,
+    jobcode_level1_filter: jobcode1 || null,
+    jobcode_level2_filter: jobcode2 || null,
+  };
+  const { data, error } = await callQbRollups(payload);
+  if (error) {
+    setText("#project-experience-summary", error.message);
+    renderProjectExperience([]);
+    return;
+  }
+  const normalized = normalizeExperienceRollup(data);
+  renderProjectSummary(normalized, { employee, jobcode1, jobcode2 });
+  renderProjectExperience(normalized.experience_rows);
+}
+
+function clearProjectExperienceLookup() {
+  $("#project-experience-lookup")?.reset();
+  setText("#project-experience-summary", "Search by project/job code and optionally narrow to one employee.");
+  setText("#project-metric-hours", "-");
+  setText("#project-metric-employees", "-");
+  setText("#project-metric-entries", "-");
+  setText("#project-metric-range", "-");
+  renderProjectExperience([]);
+}
+
+function setProjectLookupLoading() {
+  setText("#project-experience-summary", "Searching authorized experience data...");
+  setText("#project-metric-hours", "...");
+  setText("#project-metric-employees", "...");
+  setText("#project-metric-entries", "...");
+  setText("#project-metric-range", "...");
+  renderRows($("#project-experience-body"), [], [() => ""]);
+}
+
+function renderProjectSummary(data, filters) {
+  const parts = [
+    filters.employee ? `employee "${filters.employee}"` : null,
+    filters.jobcode1 ? `Job Code 1 "${filters.jobcode1}"` : null,
+    filters.jobcode2 ? `Job Code 2 "${filters.jobcode2}"` : null,
+  ].filter(Boolean);
+  const scope = parts.length ? parts.join(", ") : "all authorized experience";
+  setText("#project-experience-summary", `${formatNumber(data.filtered_timesheets)} matching entries for ${scope}.`);
+  setText("#project-metric-hours", formatNumber(data.filtered_hours));
+  setText("#project-metric-employees", formatNumber(data.filtered_employees));
+  setText("#project-metric-entries", formatNumber(data.filtered_timesheets));
+  setText("#project-metric-range", data.date_start || data.date_end ? `${formatDate(data.date_start)} - ${formatDate(data.date_end)}` : "-");
+}
+
+function renderProjectExperience(rows) {
+  const sortedRows = [...(rows || [])].sort((a, b) => numeric(b.hours) - numeric(a.hours)).slice(0, 100);
+  renderRows($("#project-experience-body"), sortedRows, [
+    (r) => escapeHtml(r.employee),
+    (r) => escapeHtml(detailJobcodeLabel(r, 1)),
+    (r) => escapeHtml(detailJobcodeLabel(r, 2)),
+    (r) => escapeHtml(displayServiceLabel(r.service_item)),
+    (r) => formatNumber(r.hours),
+    (r) => formatNumber(r.timesheets),
+    (r) => formatDate(r.first_work),
+    (r) => formatDate(r.last_work),
+  ]);
 }
 
 async function callQbRollups(payload) {
