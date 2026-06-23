@@ -17,18 +17,10 @@ async function completeSignIn() {
 
   if (url.searchParams.has("code")) {
     showMessage("Completing Microsoft sign-in...");
-    const { error } = await supabase.auth.exchangeCodeForSession(url.searchParams.get("code"));
-    if (error) {
-      const { data } = await supabase.auth.getSession();
-      if (!data.session) {
-        showMessage(`Microsoft sign-in could not be completed: ${error.message}`);
-        return;
-      }
-    }
-    cleanAuthCallbackUrl(url);
   }
 
   const session = await waitForSession();
+  cleanAuthCallbackUrl(url);
   if (!session) {
     showMessage("No Microsoft session was returned. Please start sign-in again.");
     setTimeout(() => {
@@ -48,7 +40,7 @@ async function completeSignIn() {
 }
 
 async function waitForSession() {
-  for (let attempt = 0; attempt < 16; attempt += 1) {
+  for (let attempt = 0; attempt < 24; attempt += 1) {
     const { data } = await supabase.auth.getSession();
     if (data.session) return data.session;
     await sleep(250);
