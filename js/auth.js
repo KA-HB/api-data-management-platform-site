@@ -40,8 +40,20 @@ export async function requireAuth(requiredRole = null) {
 export async function redirectFromLogin() {
   const profile = await currentProfile();
   if (!profile) return false;
-  location.href = profile.role === "admin" ? "./pages/admin-dashboard.html" : "./pages/user-dashboard.html";
+  location.href = dashboardPath(profile.role);
   return true;
+}
+
+export function dashboardPath(role) {
+  const page = role === "admin" ? "admin-dashboard.html" : "user-dashboard.html";
+  return inPagesDirectory() ? `./${page}` : `./pages/${page}`;
+}
+
+function inPagesDirectory() {
+  return location.pathname
+    .replace(/\\/g, "/")
+    .split("/")
+    .includes("pages");
 }
 
 export async function logout() {
