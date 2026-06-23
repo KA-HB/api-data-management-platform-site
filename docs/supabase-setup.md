@@ -2,7 +2,9 @@
 
 ## Authentication
 
-Enable email/password authentication in Supabase Auth. Password reset links should redirect to your hosted `index.html`.
+Enable Microsoft Azure authentication in Supabase Auth and set the Azure application to the Hayat Brown tenant. Disable the Email provider in Supabase Auth so users cannot create password-based accounts.
+
+Azure redirect URLs should include the hosted `index.html` URL. The app redirects authenticated users to the correct dashboard based on their `profiles.role`.
 
 ## Database
 

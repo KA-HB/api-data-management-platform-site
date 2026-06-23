@@ -12,16 +12,10 @@
     <section class="login-card">
       <h1>API Data Management Platform</h1>
       <p>Secure access to internal datasets, APIs, and QuickBooks Time data.</p>
-      <form id="login-form">
-        <label>Email <input id="email" type="email" autocomplete="email" required></label>
-        <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
-        <button type="submit">Log in</button>
-      </form>
-      <hr>
-      <form id="reset-form">
-        <label>Password reset email <input id="reset-email" type="email" autocomplete="email"></label>
-        <button class="secondary" type="submit">Send reset link</button>
-      </form>
+      <button id="azure-login" class="sso-button" type="button">
+        <span aria-hidden="true">M</span> Continue with Microsoft
+      </button>
+      <p class="login-note">Use your Hayat Brown Microsoft account. Access is limited to approved tenant users.</p>
     </section>
   </main>
   <script type="module" src="./js/app.js"></script>
