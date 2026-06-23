@@ -6,7 +6,17 @@ export async function currentProfile() {
   const { data: sessionData } = await supabase.auth.getSession();
   const session = sessionData.session;
   if (!session) return null;
-  const { data, error } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
+
+  let { data, error } = await supabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
+  if ((error || !data) && session.user.id) {
+    const { error: syncError } = await supabase.rpc("ensure_current_profile");
+    if (!syncError) {
+      const refreshed = await supabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
+      data = refreshed.data;
+      error = refreshed.error;
+    }
+  }
+
   if (error || !data?.active) return null;
   return { ...data, session };
 }
@@ -29,8 +39,9 @@ export async function requireAuth(requiredRole = null) {
 
 export async function redirectFromLogin() {
   const profile = await currentProfile();
-  if (!profile) return;
+  if (!profile) return false;
   location.href = profile.role === "admin" ? "./pages/admin-dashboard.html" : "./pages/user-dashboard.html";
+  return true;
 }
 
 export async function logout() {
