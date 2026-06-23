@@ -418,6 +418,7 @@ function maxDate(values) {
 }
 
 async function rawQbRollupFallback(payload, cachedData, cachedError) {
+  if (!AUTOMATIC_RAW_ROLLUP_FALLBACK) return null;
   if (cachedError || !availableDatasets.length) return null;
   const timesheetDatasets = rawTimesheetDatasets(payload);
   if (!timesheetDatasets.length) return null;
