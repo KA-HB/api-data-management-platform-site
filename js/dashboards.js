@@ -898,11 +898,11 @@ function emptyQbPayload() {
 
 async function syncQuickBooksTime() {
   const button = $("#dashboard-qb-sync");
-  const progress = startProgress("Syncing QuickBooks Time data...");
-  setButtonBusy(button, true, "Syncing...");
+  const progress = startProgress("Backfilling QuickBooks Time through today...");
+  setButtonBusy(button, true, "Backfilling...");
   try {
     const headers = await authHeaders();
-    const response = await fetch(`${FUNCTIONS_BASE_URL}/qbtime?action=sync`, { method: "POST", headers });
+    const response = await fetch(`${FUNCTIONS_BASE_URL}/qbtime?action=sync&mode=full`, { method: "POST", headers });
     const payload = await readPayload(response);
     if (!response.ok) {
       stopProgress(progress, payload.error || `Sync failed with status ${response.status}`, "error");

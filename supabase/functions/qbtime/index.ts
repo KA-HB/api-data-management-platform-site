@@ -15,9 +15,10 @@ Deno.serve(async (req) => {
 
   const url = new URL(req.url);
   const action = url.searchParams.get("action") || "settings";
+  const forceFullTimesheets = fullSyncRequested(url);
   const scheduleSecret = Deno.env.get("SCHEDULE_SECRET");
   if (req.method === "POST" && action === "sync" && scheduleSecret && req.headers.get("x-schedule-secret") === scheduleSecret) {
-    return jsonResponse({ data: await runSync(serviceClient()) });
+    return jsonResponse({ data: await runSync(serviceClient(), { forceFullTimesheets }) });
   }
 
   if (req.method === "GET" && action === "callback") {
@@ -98,7 +99,7 @@ Deno.serve(async (req) => {
   }
 
   if (req.method === "POST" && action === "sync") {
-    const result = await runSync(service);
+    const result = await runSync(service, { forceFullTimesheets });
     await userSupabase.rpc("log_activity", { action_name: "qbtime.manual_sync", details_json: result });
     return jsonResponse({ data: result });
   }
@@ -124,7 +125,15 @@ async function exchangeCode(settings: Record<string, string>, code: string) {
   return response.json();
 }
 
-async function runSync(supabase: ReturnType<typeof serviceClient>) {
+function fullSyncRequested(url: URL) {
+  const mode = String(url.searchParams.get("mode") || "").toLowerCase();
+  const full = String(url.searchParams.get("full") || "").toLowerCase();
+  return mode === "full" || full === "true" || full === "1" || Deno.env.get("QB_TIME_FORCE_FULL_SYNC") === "true";
+}
+
+type SyncOptions = { forceFullTimesheets?: boolean };
+
+async function runSync(supabase: ReturnType<typeof serviceClient>, options: SyncOptions = {}) {
   const started = new Date().toISOString();
   await supabase.from("sync_logs").update({
     status: "failed",
@@ -151,7 +160,7 @@ async function runSync(supabase: ReturnType<typeof serviceClient>) {
 
     for (const resource of resources) {
       try {
-        stats[resource.dataset] = await syncResourceDataset(supabase, resource, accessToken);
+        stats[resource.dataset] = await syncResourceDataset(supabase, resource, accessToken, options);
       } catch (error) {
         errors.push({ dataset: resource.dataset, message: error.message || "Sync failed" });
       }
@@ -163,7 +172,7 @@ async function runSync(supabase: ReturnType<typeof serviceClient>) {
     await supabase.from("sync_logs").update({
       status,
       message: errors.map((error) => `${error.dataset}: ${error.message}`).join("; ") || null,
-      stats: { ...stats, errors },
+      stats: { ...stats, mode: options.forceFullTimesheets ? "full" : "incremental", errors },
       finished_at: new Date().toISOString(),
     }).eq("id", log.id);
     return { status, stats, errors };
@@ -233,6 +242,7 @@ async function syncResourceDataset(
   supabase: ReturnType<typeof serviceClient>,
   resource: { endpoint: string; dataset: string; useDateRange?: boolean },
   accessToken: string,
+  options: SyncOptions = {},
 ) {
   const base = Deno.env.get("QB_TIME_API_URL") || "https://rest.tsheets.com/api/v1";
   const perPage = Number(Deno.env.get("QB_TIME_PAGE_SIZE") || "200");
@@ -255,13 +265,15 @@ async function syncResourceDataset(
 
   if (resource.useDateRange) {
     const { start: configuredStart, end } = configuredDateWindow();
-    const latestWorkDate = await latestDatasetWorkDate(supabase, dataset.id);
+    const forceFullWindow = Boolean(options.forceFullTimesheets);
+    const latestWorkDate = forceFullWindow ? null : await latestDatasetWorkDate(supabase, dataset.id);
     const overlapDays = Math.max(Number(Deno.env.get("QB_TIME_INCREMENTAL_OVERLAP_DAYS") || "7"), 0);
     const catchupStart = latestWorkDate
       ? maxDate(subtractUtcDays(new Date(`${latestWorkDate}T00:00:00Z`), overlapDays), configuredStart)
       : configuredStart;
     const rows = await fetchDateWindowRowsInChunks(resource.endpoint, accessToken, catchupStart, end, perPage, maxPages);
     await upsertDatasetRows(supabase, dataset.id, rows);
+    if (forceFullWindow && rows.length) await deleteLegacyDatasetDateRange(supabase, dataset.id, catchupStart, end);
     const total = await countDatasetRecords(supabase, dataset.id);
     await supabase.from("datasets").update({ record_count: total }).eq("id", dataset.id);
     return total;
@@ -379,6 +391,17 @@ async function fetchDateWindowRows(resource: string, accessToken: string, start:
   return rows;
 }
 
+async function deleteLegacyDatasetDateRange(supabase: ReturnType<typeof serviceClient>, datasetId: string, start: Date, end: Date) {
+  const { error } = await supabase
+    .from("records")
+    .delete()
+    .eq("dataset_id", datasetId)
+    .gte("work_date", dateParam(start))
+    .lte("work_date", dateParam(end))
+    .not("source_hash", "like", "qbtime:%");
+  if (error) throw error;
+}
+
 async function countDatasetRecords(supabase: ReturnType<typeof serviceClient>, datasetId: string) {
   const { count, error } = await supabase
     .from("records")
@@ -417,7 +440,7 @@ async function upsertDatasetRows(supabase: ReturnType<typeof serviceClient>, dat
   if (!rows.length) return;
   const recordMap = new Map<string, { dataset_id: string; json_data: unknown; source_hash: string }>();
   for (const row of rows) {
-    const sourceHash = await digest(JSON.stringify(row));
+    const sourceHash = await sourceHashForRow(row);
     recordMap.set(sourceHash, {
       dataset_id: datasetId,
       json_data: row,
@@ -426,8 +449,15 @@ async function upsertDatasetRows(supabase: ReturnType<typeof serviceClient>, dat
   }
   const records = Array.from(recordMap.values());
   for (let i = 0; i < records.length; i += 1000) {
-    await supabase.from("records").upsert(records.slice(i, i + 1000), { onConflict: "dataset_id,source_hash" });
+    const { error } = await supabase.from("records").upsert(records.slice(i, i + 1000), { onConflict: "dataset_id,source_hash" });
+    if (error) throw error;
   }
+}
+
+async function sourceHashForRow(row: unknown) {
+  const stableId = row && typeof row === "object" && "id" in row ? String((row as { id?: unknown }).id || "").trim() : "";
+  if (stableId) return `qbtime:${stableId}`;
+  return digest(JSON.stringify(row));
 }
 
 async function digest(value: string) {
