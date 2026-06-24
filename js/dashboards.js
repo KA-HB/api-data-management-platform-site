@@ -93,12 +93,12 @@ async function loadDashboard() {
     if (error) return stopProgress(progress, error.message, "error");
 
     lastSummary = summary;
-    const experience = await callQbRollups(emptyQbPayload());
+    qbFilterOptions = mergeFilterOptions(normalizeFilterOptions(qbOptions?.data), jobcodeReferenceOptions);
+    populateQbFilters(qbFilterOptions);
+
+    const experience = await callQbRollups(emptyQbPayload(), { allowDeltaFallback: false, allowJobcodeRebuild: false });
     lastGeneralCoverage = experience.data ? normalizeExperienceRollup(experience.data) : buildFastCoverageSummary(summary);
-    qbFilterOptions = mergeFilterOptions(
-      normalizeFilterOptions(qbOptions?.data),
-      mergeFilterOptions(jobcodeReferenceOptions, buildFilterOptionsFromRollup(lastGeneralCoverage)),
-    );
+    qbFilterOptions = mergeFilterOptions(qbFilterOptions, buildFilterOptionsFromRollup(lastGeneralCoverage));
     populateQbFilters(qbFilterOptions);
     if (qbOptions?.error) {
       console.warn("Dashboard filter options RPC failed; using dashboard rollup fallback.", qbOptions.error.message);
@@ -289,9 +289,9 @@ function renderProjectExperience(rows) {
   ]);
 }
 
-async function callQbRollups(payload) {
+async function callQbRollups(payload, options = {}) {
   const result = await callQbRollupOnce(payload);
-  const rawFallback = await rawQbRollupFallback(payload, result.data, result.error);
+  const rawFallback = await rawQbRollupFallback(payload, result.data, result.error, options);
   if (rawFallback) return rawFallback;
   if (!shouldExpandJobcodeFilter(payload, result.data, result.error)) return result;
 
@@ -299,7 +299,7 @@ async function callQbRollups(payload) {
   if (!expandedPayloads.length) return result;
 
   const expandedResults = await callExpandedQbRollups(expandedPayloads);
-  const expandedRawFallback = await rawQbRollupFallback(payload, expandedResults.data, expandedResults.error);
+  const expandedRawFallback = await rawQbRollupFallback(payload, expandedResults.data, expandedResults.error, options);
   if (expandedRawFallback) return expandedRawFallback;
   if (expandedResults.error) return result;
   if (!numeric(expandedResults.data?.filtered_timesheets)) return result;
@@ -508,13 +508,15 @@ function maxDate(values) {
   return dates[dates.length - 1] || null;
 }
 
-async function rawQbRollupFallback(payload, cachedData, cachedError) {
+async function rawQbRollupFallback(payload, cachedData, cachedError, options = {}) {
   if (cachedError || !availableDatasets.length) return null;
+  const allowDeltaFallback = options.allowDeltaFallback ?? AUTOMATIC_RAW_ROLLUP_FALLBACK;
+  const allowJobcodeRebuild = options.allowJobcodeRebuild ?? AUTOMATIC_RAW_ROLLUP_FALLBACK;
+  const rebuildForBadJobcodes = allowJobcodeRebuild && hasPoorJobcodeCoverage(cachedData);
+  if (!allowDeltaFallback && !rebuildForBadJobcodes) return null;
   const timesheetDatasets = rawTimesheetDatasets(payload);
   if (!timesheetDatasets.length) return null;
   const cachedEnd = cachedData?.date_end;
-  const rebuildForBadJobcodes = hasPoorJobcodeCoverage(cachedData);
-  if (!AUTOMATIC_RAW_ROLLUP_FALLBACK && !rebuildForBadJobcodes) return null;
   if (!rebuildForBadJobcodes && !cachedEnd) return null;
   if (!rebuildForBadJobcodes && cachedEnd && payload.end_date && String(payload.end_date) <= String(cachedEnd)) return null;
   if (!rebuildForBadJobcodes && cachedEnd && !(await hasNewerRawTimesheets(timesheetDatasets, cachedEnd))) return null;
@@ -994,11 +996,11 @@ function emptyQbPayload() {
 
 async function syncQuickBooksTime() {
   const button = $("#dashboard-qb-sync");
-  const progress = startProgress("Backfilling QuickBooks Time through today...");
-  setButtonBusy(button, true, "Backfilling...");
+  const progress = startProgress("Syncing recent QuickBooks Time changes...");
+  setButtonBusy(button, true, "Syncing...");
   try {
     const headers = await authHeaders();
-    const response = await fetch(`${FUNCTIONS_BASE_URL}/qbtime?action=sync&mode=full`, { method: "POST", headers });
+    const response = await fetch(`${FUNCTIONS_BASE_URL}/qbtime?action=sync`, { method: "POST", headers });
     const payload = await readPayload(response);
     if (!response.ok) {
       stopProgress(progress, payload.error || `Sync failed with status ${response.status}`, "error");
