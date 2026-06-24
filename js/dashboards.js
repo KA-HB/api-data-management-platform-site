@@ -5,7 +5,7 @@ import { $, escapeHtml, renderRows, setButtonBusy, setText, startProgress, stopP
 
 const profile = await requireAuth();
 const charts = new Map();
-let qbFilterOptions = null;
+let qbFilterOptions = emptyQbFilterOptions();
 let availableDatasets = [];
 let lastSummary = null;
 let lastGeneralCoverage = null;
@@ -18,6 +18,16 @@ function readBooleanFlag(key) {
   } catch {
     return false;
   }
+}
+
+function emptyQbFilterOptions() {
+  return {
+    employees: [],
+    jobcode_level1: [],
+    jobcode_level2: [],
+    jobcode_level3: [],
+    service_items: [],
+  };
 }
 
 if (profile) {
@@ -81,14 +91,17 @@ async function loadDashboard() {
 
     if (error) return stopProgress(progress, error.message, "error");
 
-    if (qbOptions?.data) {
-      qbFilterOptions = qbOptions.data;
-      populateQbFilters(qbFilterOptions);
-    }
-
     lastSummary = summary;
     const experience = await callQbRollups(emptyQbPayload());
     lastGeneralCoverage = experience.data ? normalizeExperienceRollup(experience.data) : buildFastCoverageSummary(summary);
+    qbFilterOptions = mergeFilterOptions(
+      normalizeFilterOptions(qbOptions?.data),
+      buildFilterOptionsFromRollup(lastGeneralCoverage),
+    );
+    populateQbFilters(qbFilterOptions);
+    if (qbOptions?.error) {
+      console.warn("Dashboard filter options RPC failed; using dashboard rollup fallback.", qbOptions.error.message);
+    }
     renderGeneralDashboard(summary, lastGeneralCoverage);
     stopProgress(progress);
 
@@ -869,10 +882,11 @@ function displayJobcodeLabel(value, fallback = "Unassigned") {
 
 function jobcodePathFromOptions(value) {
   const selected = String(value || "").trim();
-  if (!selected || !qbFilterOptions) return {};
+  if (!selected) return {};
   const same = (candidate) => String(candidate || "").trim() === selected;
   const label = (candidate) => cleanJobcodeLabel(candidate);
-  const level3 = (qbFilterOptions.jobcode_level3 || []).find((row) => same(row.id) || same(row.name));
+  const options = normalizeFilterOptions(qbFilterOptions);
+  const level3 = options.jobcode_level3.find((row) => same(row.id) || same(row.name));
   if (level3) {
     return {
       level1: label(level3.grandparent_name) || label(level3.grandparent_id),
@@ -881,7 +895,7 @@ function jobcodePathFromOptions(value) {
       jobcode: label(level3.name) || label(level3.parent_name) || label(level3.grandparent_name),
     };
   }
-  const level2 = (qbFilterOptions.jobcode_level2 || []).find((row) => same(row.id) || same(row.name));
+  const level2 = options.jobcode_level2.find((row) => same(row.id) || same(row.name));
   if (level2) {
     return {
       level1: label(level2.parent_name) || label(level2.parent_id),
@@ -889,7 +903,7 @@ function jobcodePathFromOptions(value) {
       jobcode: label(level2.name) || label(level2.parent_name),
     };
   }
-  const level1 = (qbFilterOptions.jobcode_level1 || []).find((row) => same(row.id) || same(row.name));
+  const level1 = options.jobcode_level1.find((row) => same(row.id) || same(row.name));
   if (level1) return { level1: label(level1.name), jobcode: label(level1.name) };
   return {};
 }
@@ -1048,11 +1062,112 @@ function clearQbFilters() {
 }
 
 function populateQbFilters(options) {
-  fillEmployeeOptions(options.employees || []);
-  fillSelect("#filter-jobcode-1", options.jobcode_level1 || [], "All Job Code 1", { hideNumericNames: true });
-  fillSelect("#filter-service-item", (options.service_items || []).map((name) => ({ id: name, name })), "All service items");
-  fillProjectLookupOptions(options);
+  const normalized = normalizeFilterOptions(options);
+  fillEmployeeOptions(normalized.employees);
+  fillSelect("#filter-jobcode-1", normalized.jobcode_level1, "All Job Code 1", { hideNumericNames: true });
+  fillSelect("#filter-service-item", normalized.service_items.map((name) => ({ id: name, name })), "All service items");
+  fillProjectLookupOptions(normalized);
   refreshDependentJobFilters();
+}
+
+function normalizeFilterOptions(options = {}) {
+  const fallback = emptyQbFilterOptions();
+  return {
+    employees: Array.isArray(options.employees) ? options.employees : fallback.employees,
+    jobcode_level1: Array.isArray(options.jobcode_level1) ? options.jobcode_level1 : fallback.jobcode_level1,
+    jobcode_level2: Array.isArray(options.jobcode_level2) ? options.jobcode_level2 : fallback.jobcode_level2,
+    jobcode_level3: Array.isArray(options.jobcode_level3) ? options.jobcode_level3 : fallback.jobcode_level3,
+    service_items: Array.isArray(options.service_items) ? options.service_items : fallback.service_items,
+  };
+}
+
+function buildFilterOptionsFromRollup(data = {}) {
+  const options = emptyQbFilterOptions();
+  const employees = new Map();
+  const level1 = new Map();
+  const level2 = new Map();
+  const level3 = new Map();
+  const services = new Set();
+  const detailRows = (data.experience_rows || []).map((row) => normalizeExperienceDetailRow(row));
+
+  for (const row of data.employee_experience || []) {
+    const name = cleanEmployeeLabel(row.employee);
+    if (name) employees.set(name, { id: String(row.employee_id || name), name });
+  }
+
+  for (const row of detailRows) {
+    const employee = cleanEmployeeLabel(row.employee);
+    if (employee) employees.set(employee, { id: String(row.employee_id || employee), name: employee });
+
+    const l1 = cleanJobcodeLabel(row.jobcode_level1);
+    const l2 = cleanJobcodeLabel(row.jobcode_level2);
+    const l3 = cleanJobcodeLabel(row.jobcode_level3);
+    if (l1) level1.set(l1, { id: String(row.jobcode_level1_id || l1), name: l1 });
+    if (l1 && l2) {
+      level2.set(`${l1}|${l2}`, {
+        id: String(row.jobcode_level2_id || l2),
+        name: l2,
+        parent_id: String(row.jobcode_level1_id || l1),
+        parent_name: l1,
+      });
+    }
+    if (l1 && l2 && l3) {
+      level3.set(`${l1}|${l2}|${l3}`, {
+        id: String(row.jobcode_level3_id || l3),
+        name: l3,
+        parent_id: String(row.jobcode_level2_id || l2),
+        parent_name: l2,
+        grandparent_id: String(row.jobcode_level1_id || l1),
+        grandparent_name: l1,
+      });
+    }
+
+    const service = cleanServiceLabel(row.service_item);
+    if (service) services.add(service);
+  }
+
+  for (const row of data.hours_by_jobcode || []) {
+    const jobcode = cleanJobcodeLabel(row.jobcode);
+    if (jobcode) level1.set(jobcode, { id: jobcode, name: jobcode });
+  }
+
+  for (const row of data.hours_by_service_item || []) {
+    const service = cleanServiceLabel(row.service_item);
+    if (service) services.add(service);
+  }
+
+  options.employees = sortByName(Array.from(employees.values()));
+  options.jobcode_level1 = sortByName(Array.from(level1.values()));
+  options.jobcode_level2 = sortByName(Array.from(level2.values()));
+  options.jobcode_level3 = sortByName(Array.from(level3.values()));
+  options.service_items = Array.from(services).sort((a, b) => a.localeCompare(b));
+  return options;
+}
+
+function mergeFilterOptions(primary, fallback) {
+  const base = normalizeFilterOptions(primary);
+  const next = normalizeFilterOptions(fallback);
+  return {
+    employees: mergeOptionRows(base.employees, next.employees),
+    jobcode_level1: mergeOptionRows(base.jobcode_level1, next.jobcode_level1),
+    jobcode_level2: mergeOptionRows(base.jobcode_level2, next.jobcode_level2),
+    jobcode_level3: mergeOptionRows(base.jobcode_level3, next.jobcode_level3),
+    service_items: Array.from(new Set([...base.service_items, ...next.service_items].filter(cleanServiceLabel))).sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+function mergeOptionRows(primary = [], fallback = []) {
+  const rows = new Map();
+  for (const row of [...fallback, ...primary]) {
+    const name = cleanJobcodeLabel(row?.name) || cleanEmployeeLabel(row?.name);
+    if (!name) continue;
+    rows.set(name, { ...row, id: String(row.id || name), name });
+  }
+  return sortByName(Array.from(rows.values()));
+}
+
+function sortByName(rows) {
+  return rows.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
 }
 
 function fillEmployeeOptions(rows) {
@@ -1093,7 +1208,7 @@ function updateDatasetIndicator() {
 }
 
 function refreshDependentJobFilters() {
-  if (!qbFilterOptions) return;
+  qbFilterOptions = normalizeFilterOptions(qbFilterOptions);
   const selectedLevel1 = $("#filter-jobcode-1")?.value || "";
   const selectedLevel2 = $("#filter-jobcode-2")?.value || "";
   const selectedLevel3 = $("#filter-jobcode-3")?.value || "";
