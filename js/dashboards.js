@@ -231,12 +231,12 @@ async function searchProjectExperience(event) {
   }
 
   setProjectLookupLoading();
-  const payload = {
+  const payload = normalizeDerivedJobcodePayload({
     ...emptyQbPayload(),
     employee_filter: employee || null,
     jobcode_level1_filter: jobcode1 || null,
     jobcode_level2_filter: jobcode2 || null,
-  };
+  });
   const { data, error } = await callQbRollups(payload);
   if (error) {
     setText("#project-experience-summary", error.message);
@@ -949,10 +949,11 @@ function normalizeExperienceDetailRow(row = {}) {
   ];
   const optionPath = pathValues.reduce((path, value) => mergeJobcodePath(path, jobcodePathFromOptions(value)), {});
   const splitPath = splitJobcodePath(row.jobcode);
-  const level1 = cleanJobcodeLabel(row.jobcode_level1) || optionPath.level1 || splitPath[0] || null;
-  const level2 = cleanJobcodeLabel(row.jobcode_level2) || optionPath.level2 || splitPath[1] || null;
-  const level3 = cleanJobcodeLabel(row.jobcode_level3) || optionPath.level3 || splitPath[2] || null;
-  const jobcode = cleanJobcodeLabel(row.jobcode) || optionPath.jobcode || level3 || level2 || level1 || "Unassigned";
+  const servicePath = servicePathFromLabel(row.service_item);
+  const level1 = cleanJobcodeLabel(row.jobcode_level1) || optionPath.level1 || splitPath[0] || servicePath.level1 || null;
+  const level2 = cleanJobcodeLabel(row.jobcode_level2) || optionPath.level2 || splitPath[1] || servicePath.level2 || null;
+  const level3 = cleanJobcodeLabel(row.jobcode_level3) || optionPath.level3 || splitPath[2] || servicePath.level3 || null;
+  const jobcode = cleanJobcodeLabel(row.jobcode) || optionPath.jobcode || servicePath.jobcode || level3 || level2 || level1 || "Unassigned";
   return {
     ...row,
     jobcode_level1: level1 || "Unassigned",
@@ -977,7 +978,91 @@ function cleanServiceLabel(value) {
 }
 
 function displayServiceLabel(value) {
-  return cleanServiceLabel(value) || "No service item";
+  return servicePathFromLabel(value).service || cleanServiceLabel(value) || "No service item";
+}
+
+function servicePathFromLabel(value) {
+  const label = cleanServiceLabel(value);
+  if (!label || label === "No service item") return {};
+  const parts = label.split(":").map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return { service: label };
+  const service = cleanServiceLabel(parts[parts.length - 1]);
+  const jobParts = parts.slice(0, -1).map((part) => cleanJobcodeLabel(part)).filter(Boolean);
+  return {
+    level1: jobParts[0] || null,
+    level2: jobParts[1] || null,
+    level3: jobParts.length > 2 ? jobParts.slice(2).join(":") : null,
+    jobcode: jobParts[jobParts.length - 1] || jobParts[0] || null,
+    service,
+  };
+}
+
+function addServicePathOptions(level1, level2, level3, value) {
+  const path = servicePathFromLabel(value);
+  if (!path.level1) return;
+  level1.set(path.level1, { id: path.level1, name: path.level1, derived_from_service_path: true });
+  if (path.level2) {
+    level2.set(`${path.level1}|${path.level2}`, {
+      id: path.level2,
+      name: path.level2,
+      parent_id: path.level1,
+      parent_name: path.level1,
+      derived_from_service_path: true,
+    });
+  }
+  if (path.level2 && path.level3) {
+    level3.set(`${path.level1}|${path.level2}|${path.level3}`, {
+      id: path.level3,
+      name: path.level3,
+      parent_id: path.level2,
+      parent_name: path.level2,
+      grandparent_id: path.level1,
+      grandparent_name: path.level1,
+      derived_from_service_path: true,
+    });
+  }
+}
+
+function buildFilterOptionsFromServiceItems(values = []) {
+  const options = emptyQbFilterOptions();
+  const level1 = new Map();
+  const level2 = new Map();
+  const level3 = new Map();
+  const services = new Set();
+  for (const value of values) {
+    addServicePathOptions(level1, level2, level3, value);
+    const service = displayServiceLabel(value);
+    if (service && service !== "No service item") services.add(service);
+  }
+  options.jobcode_level1 = sortByName(Array.from(level1.values()));
+  options.jobcode_level2 = sortByName(Array.from(level2.values()));
+  options.jobcode_level3 = sortByName(Array.from(level3.values()));
+  options.service_items = Array.from(services).sort((a, b) => a.localeCompare(b));
+  return options;
+}
+
+function normalizeDerivedJobcodePayload(payload) {
+  const next = { ...payload };
+  const derived = [
+    ["jobcode_level1_filter", next.jobcode_level1_filter],
+    ["jobcode_level2_filter", next.jobcode_level2_filter],
+    ["jobcode_level3_filter", next.jobcode_level3_filter],
+  ].filter(([, value]) => isDerivedServicePathSelection(value));
+  if (!derived.length) return next;
+  const mostSpecific = derived[derived.length - 1][1];
+  next.keyword_filter = [next.keyword_filter, mostSpecific].filter(Boolean).join(" ") || null;
+  next.jobcode_level1_filter = null;
+  next.jobcode_level2_filter = null;
+  next.jobcode_level3_filter = null;
+  return next;
+}
+
+function isDerivedServicePathSelection(value) {
+  const selected = String(value || "").trim();
+  if (!selected) return false;
+  const options = normalizeFilterOptions(qbFilterOptions);
+  return [...options.jobcode_level1, ...options.jobcode_level2, ...options.jobcode_level3]
+    .some((row) => row?.derived_from_service_path && optionMatches(row, selected, ["id", "name"]));
 }
 
 async function callSearchSummary() {
@@ -1046,7 +1131,7 @@ async function readPayload(response) {
 }
 
 function qbFilterPayload() {
-  return {
+  return normalizeDerivedJobcodePayload({
     dataset_uuid: $("#filter-dataset")?.value || null,
     keyword_filter: $("#filter-keyword")?.value.trim() || null,
     employee_filter: $("#filter-employee")?.value.trim() || null,
@@ -1056,7 +1141,7 @@ function qbFilterPayload() {
     jobcode_level2_filter: $("#filter-jobcode-2")?.value || null,
     jobcode_level3_filter: $("#filter-jobcode-3")?.value || null,
     service_item_filter: $("#filter-service-item")?.value || null,
-  };
+  });
 }
 
 function searchSummaryPayload() {
@@ -1162,10 +1247,7 @@ async function loadRawServiceItemOptions() {
       }
     }
 
-    const options = {
-      ...emptyQbFilterOptions(),
-      service_items: Array.from(serviceItems).sort((a, b) => a.localeCompare(b)),
-    };
+    const options = buildFilterOptionsFromServiceItems(Array.from(serviceItems));
     writeFilterOptionCache(cacheKey, options);
     return options;
   } catch (error) {
@@ -1344,8 +1426,9 @@ function buildFilterOptionsFromRollup(data = {}) {
       });
     }
 
-    const service = cleanServiceLabel(row.service_item);
-    if (service) services.add(service);
+    addServicePathOptions(level1, level2, level3, row.service_item);
+    const service = displayServiceLabel(row.service_item);
+    if (service && service !== "No service item") services.add(service);
   }
 
   for (const row of data.hours_by_jobcode || []) {
@@ -1354,8 +1437,9 @@ function buildFilterOptionsFromRollup(data = {}) {
   }
 
   for (const row of data.hours_by_service_item || []) {
-    const service = cleanServiceLabel(row.service_item);
-    if (service) services.add(service);
+    addServicePathOptions(level1, level2, level3, row.service_item);
+    const service = displayServiceLabel(row.service_item);
+    if (service && service !== "No service item") services.add(service);
   }
 
   options.employees = sortByName(Array.from(employees.values()));
