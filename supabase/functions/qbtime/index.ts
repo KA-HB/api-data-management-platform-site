@@ -169,6 +169,7 @@ async function runSync(supabase: ReturnType<typeof serviceClient>, options: Sync
       }
     }
 
+    await supabase.rpc("grant_shared_qbtime_dataset_permissions", { target_user_id: null });
     await supabase.rpc("refresh_dashboard_experience_records");
     await supabase.from("qbtime_settings").update({ last_sync: new Date().toISOString() }).eq("id", settings.id);
     const status = errors.length ? "partial" : "success";
@@ -221,16 +222,9 @@ async function fetchAll(resource: string, accessToken: string, useDateRange = fa
       url.searchParams.set("start_date", start.toISOString().slice(0, 10));
       url.searchParams.set("end_date", end.toISOString().slice(0, 10));
     }
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
-    const response = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` }, signal: controller.signal })
-      .finally(() => clearTimeout(timeout));
-    if (!response.ok) throw new Error(await responseError(response, `QuickBooks Time ${resource} sync failed`));
-    const payload = await response.json();
-    const container = payload.results?.[resource] || payload.results || [];
-    const pageRows = Array.isArray(container) ? container : Object.values(container);
-    rows.push(...pageRows);
-    if (!payload.more || pageRows.length === 0) break;
+    const pageRows = await fetchPageRows(url, accessToken, resource);
+    rows.push(...pageRows.rows);
+    if (!pageRows.more || pageRows.rows.length === 0) break;
     if (page === maxPages) reachedPageCap = true;
     page += 1;
   }
@@ -247,10 +241,8 @@ async function syncResourceDataset(
   accessToken: string,
   options: SyncOptions = {},
 ) {
-  const base = Deno.env.get("QB_TIME_API_URL") || "https://rest.tsheets.com/api/v1";
   const perPage = Number(Deno.env.get("QB_TIME_PAGE_SIZE") || "200");
   const maxPages = Number(Deno.env.get("QB_TIME_MAX_PAGES") || "250");
-  const pagesPerRun = resource.useDateRange ? Number(Deno.env.get("QB_TIME_PAGES_PER_RUN") || "15") : maxPages;
   const name = `QuickBooks Time ${resource.dataset}`;
   const { data: existing } = await supabase.from("datasets").select("id,record_count").eq("name", name).maybeSingle();
   const { data: dataset, error: datasetError } = existing
@@ -282,42 +274,12 @@ async function syncResourceDataset(
     return total;
   }
 
-  const savedCount = resource.useDateRange ? Number(dataset.record_count || 0) : 0;
-  let page = Math.floor(savedCount / perPage) + 1;
-  let total = savedCount;
-  let pagesProcessed = 0;
-  let moreAvailable = false;
-  let reachedPageCap = false;
-
-  while (page <= maxPages && pagesProcessed < pagesPerRun) {
-    const url = new URL(`${base}/${resource.endpoint}`);
-    url.searchParams.set("per_page", String(perPage));
-    url.searchParams.set("page", String(page));
-    if (resource.useDateRange) {
-      const { start, end } = configuredDateWindow();
-      url.searchParams.set("start_date", dateParam(start));
-      url.searchParams.set("end_date", dateParam(end));
-    }
-
-    const pageRows = await fetchPageRows(url, accessToken, resource.endpoint);
-    if (!pageRows.rows.length) break;
-    await upsertDatasetRows(supabase, dataset.id, pageRows.rows);
-    total += pageRows.rows.length;
-    pagesProcessed += 1;
-    await supabase.from("datasets").update({ record_count: total }).eq("id", dataset.id);
-    if (!pageRows.more) break;
-    moreAvailable = true;
-    if (page === maxPages) reachedPageCap = true;
-    page += 1;
-  }
-
-  if (reachedPageCap) {
-    console.warn(`QuickBooks Time ${resource.endpoint} reached page cap ${maxPages}; increase QB_TIME_MAX_PAGES for a deeper sync.`);
-  }
-  if (moreAvailable && pagesProcessed >= pagesPerRun) {
-    console.warn(`QuickBooks Time ${resource.endpoint} paused after ${pagesProcessed} pages; run sync again to continue from ${total} rows.`);
-  }
-  total = await countDatasetRecords(supabase, dataset.id);
+  // Reference datasets such as Employees and Job Codes must refresh from page 1
+  // every sync. Their names and parent relationships can change, and resuming
+  // from record_count/per_page skips the pages that dashboard job-code joins need.
+  const rows = await fetchAll(resource.endpoint, accessToken, false);
+  await upsertDatasetRows(supabase, dataset.id, rows);
+  const total = await countDatasetRecords(supabase, dataset.id);
   await supabase.from("datasets").update({ record_count: total }).eq("id", dataset.id);
   return total;
 }
@@ -424,19 +386,6 @@ async function fetchPageRows(url: URL, accessToken: string, resource: string) {
   const container = payload.results?.[resource] || payload.results || [];
   const rows = Array.isArray(container) ? container : Object.values(container);
   return { rows, more: Boolean(payload.more) };
-}
-
-async function upsertResourceDataset(supabase: ReturnType<typeof serviceClient>, resourceName: string, rows: unknown[]) {
-  const name = `QuickBooks Time ${resourceName}`;
-  const { data: dataset } = await supabase.from("datasets").upsert({
-    name,
-    description: `Synchronized ${resourceName} from QuickBooks Time`,
-    source_type: "quickbooks_time",
-    record_count: rows.length,
-  }, { onConflict: "name" }).select("id").single();
-
-  if (!dataset || !rows.length) return;
-  await upsertDatasetRows(supabase, dataset.id, rows);
 }
 
 async function upsertDatasetRows(supabase: ReturnType<typeof serviceClient>, datasetId: string, rows: unknown[]) {
