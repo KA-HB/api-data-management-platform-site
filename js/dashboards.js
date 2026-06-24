@@ -83,17 +83,19 @@ async function loadDatasets() {
 async function loadDashboard() {
   const progress = startProgress("Loading dashboard data...");
   try {
-    const [{ data: summary, error }, { data: logs }, qbOptions, jobcodeReferenceOptions] = await Promise.all([
+    const [{ data: summary, error }, { data: logs }, qbOptions] = await Promise.all([
       supabase.rpc("dashboard_summary"),
       supabase.from("activity_logs").select("action,details,created_at").order("created_at", { ascending: false }).limit(8),
       supabase.rpc("dashboard_qbtime_filter_options"),
-      loadJobcodeReferenceOptions(),
     ]);
 
     if (error) return stopProgress(progress, error.message, "error");
 
     lastSummary = summary;
-    qbFilterOptions = mergeFilterOptions(normalizeFilterOptions(qbOptions?.data), jobcodeReferenceOptions);
+    const rpcFilterOptions = normalizeFilterOptions(qbOptions?.data);
+    const needsJobcodeFallback = !rpcFilterOptions.jobcode_level1.length || !rpcFilterOptions.jobcode_level2.length;
+    const jobcodeReferenceOptions = needsJobcodeFallback ? await loadJobcodeReferenceOptions() : emptyQbFilterOptions();
+    qbFilterOptions = mergeFilterOptions(rpcFilterOptions, jobcodeReferenceOptions);
     populateQbFilters(qbFilterOptions);
 
     const experience = await callQbRollups(emptyQbPayload(), { allowDeltaFallback: false, allowJobcodeRebuild: false });
