@@ -1,5 +1,5 @@
 import { requireAuth, renderShell } from "./auth.js";
-import { FUNCTIONS_BASE_URL } from "./config.js";
+import { FUNCTIONS_BASE_URL, SUPABASE_ANON_KEY } from "./config.js";
 import { supabase } from "./supabaseClient.js";
 import { $, escapeHtml, renderRows, setButtonBusy, setText, startProgress, stopProgress, toast } from "./ui.js";
 
@@ -93,7 +93,7 @@ async function loadDashboard() {
 
     lastSummary = summary;
     const rpcFilterOptions = normalizeFilterOptions(qbOptions?.data);
-    const needsJobcodeFallback = !rpcFilterOptions.jobcode_level1.length || !rpcFilterOptions.jobcode_level2.length;
+    const needsJobcodeFallback = !hasUsableJobcodeOptions(rpcFilterOptions);
     const jobcodeReferenceOptions = needsJobcodeFallback ? await loadJobcodeReferenceOptions() : emptyQbFilterOptions();
     qbFilterOptions = mergeFilterOptions(rpcFilterOptions, jobcodeReferenceOptions);
     populateQbFilters(qbFilterOptions);
@@ -1015,7 +1015,11 @@ async function syncQuickBooksTime() {
     await loadDatasets();
     await loadDashboard();
   } catch (error) {
-    stopProgress(progress, error.message, "error");
+    console.error("QuickBooks Time sync request failed", error);
+    const message = /fetch/i.test(error.message || "")
+      ? "Could not reach the QuickBooks Time sync function. Refresh, sign in again, then retry. If it continues, the Edge Function may need redeployment."
+      : error.message;
+    stopProgress(progress, message, "error");
   } finally {
     setButtonBusy(button, false);
   }
@@ -1023,7 +1027,9 @@ async function syncQuickBooksTime() {
 
 async function authHeaders() {
   const { data } = await supabase.auth.getSession();
-  return { Authorization: `Bearer ${data.session.access_token}`, "Content-Type": "application/json" };
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Your session expired. Sign in again, then retry sync.");
+  return { Authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" };
 }
 
 async function readPayload(response) {
@@ -1087,6 +1093,15 @@ function normalizeFilterOptions(options = {}) {
     jobcode_level3: Array.isArray(options.jobcode_level3) ? options.jobcode_level3 : fallback.jobcode_level3,
     service_items: Array.isArray(options.service_items) ? options.service_items : fallback.service_items,
   };
+}
+
+function hasUsableJobcodeOptions(options = {}) {
+  return usableJobcodeOptionCount(options.jobcode_level1) > 0
+    && usableJobcodeOptionCount(options.jobcode_level2) > 0;
+}
+
+function usableJobcodeOptionCount(rows = []) {
+  return (rows || []).filter((row) => cleanJobcodeLabel(row?.name)).length;
 }
 
 async function loadJobcodeReferenceOptions() {
