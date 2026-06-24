@@ -11,7 +11,7 @@ on:
 
 jobs:
   deploy:
-    name: Apply migrations and deploy functions
+    name: Deploy functions and check migrations
     runs-on: ubuntu-latest
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -29,9 +29,6 @@ jobs:
       - name: Link Supabase project
         run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
 
-      - name: Apply database migrations
-        run: supabase db push --linked
-
       - name: Deploy api function
         run: supabase functions deploy api --project-ref "$SUPABASE_PROJECT_REF"
 
@@ -46,3 +43,6 @@ jobs:
 
       - name: Deploy scheduled-sync function
         run: supabase functions deploy scheduled-sync --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Check database migrations
+        run: supabase db push --linked
