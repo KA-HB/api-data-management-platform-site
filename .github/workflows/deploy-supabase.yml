@@ -1,0 +1,47 @@
+name: Deploy Supabase
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "supabase/**"
+      - ".github/workflows/deploy-supabase.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Apply migrations and deploy functions
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link Supabase project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Apply database migrations
+        run: supabase db push --linked
+
+      - name: Deploy api function
+        run: supabase functions deploy api --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Deploy api-keys function
+        run: supabase functions deploy api-keys --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Deploy user-admin function
+        run: supabase functions deploy user-admin --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Deploy qbtime function
+        run: supabase functions deploy qbtime --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Deploy scheduled-sync function
+        run: supabase functions deploy scheduled-sync --project-ref "$SUPABASE_PROJECT_REF"
