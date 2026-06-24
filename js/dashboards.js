@@ -83,10 +83,11 @@ async function loadDatasets() {
 async function loadDashboard() {
   const progress = startProgress("Loading dashboard data...");
   try {
-    const [{ data: summary, error }, { data: logs }, qbOptions] = await Promise.all([
+    const [{ data: summary, error }, { data: logs }, qbOptions, jobcodeReferenceOptions] = await Promise.all([
       supabase.rpc("dashboard_summary"),
       supabase.from("activity_logs").select("action,details,created_at").order("created_at", { ascending: false }).limit(8),
       supabase.rpc("dashboard_qbtime_filter_options"),
+      loadJobcodeReferenceOptions(),
     ]);
 
     if (error) return stopProgress(progress, error.message, "error");
@@ -96,7 +97,7 @@ async function loadDashboard() {
     lastGeneralCoverage = experience.data ? normalizeExperienceRollup(experience.data) : buildFastCoverageSummary(summary);
     qbFilterOptions = mergeFilterOptions(
       normalizeFilterOptions(qbOptions?.data),
-      buildFilterOptionsFromRollup(lastGeneralCoverage),
+      mergeFilterOptions(jobcodeReferenceOptions, buildFilterOptionsFromRollup(lastGeneralCoverage)),
     );
     populateQbFilters(qbFilterOptions);
     if (qbOptions?.error) {
@@ -886,7 +887,8 @@ function jobcodePathFromOptions(value) {
   const same = (candidate) => String(candidate || "").trim() === selected;
   const label = (candidate) => cleanJobcodeLabel(candidate);
   const options = normalizeFilterOptions(qbFilterOptions);
-  const level3 = options.jobcode_level3.find((row) => same(row.id) || same(row.name));
+  const matches = (row) => [row?.id, row?.name, row?.raw_id, row?.parent_raw_id, row?.grandparent_raw_id].some(same);
+  const level3 = options.jobcode_level3.find(matches);
   if (level3) {
     return {
       level1: label(level3.grandparent_name) || label(level3.grandparent_id),
@@ -895,7 +897,7 @@ function jobcodePathFromOptions(value) {
       jobcode: label(level3.name) || label(level3.parent_name) || label(level3.grandparent_name),
     };
   }
-  const level2 = options.jobcode_level2.find((row) => same(row.id) || same(row.name));
+  const level2 = options.jobcode_level2.find(matches);
   if (level2) {
     return {
       level1: label(level2.parent_name) || label(level2.parent_id),
@@ -903,7 +905,7 @@ function jobcodePathFromOptions(value) {
       jobcode: label(level2.name) || label(level2.parent_name),
     };
   }
-  const level1 = options.jobcode_level1.find((row) => same(row.id) || same(row.name));
+  const level1 = options.jobcode_level1.find(matches);
   if (level1) return { level1: label(level1.name), jobcode: label(level1.name) };
   return {};
 }
@@ -1081,6 +1083,123 @@ function normalizeFilterOptions(options = {}) {
   };
 }
 
+async function loadJobcodeReferenceOptions() {
+  try {
+    const { data: datasets, error: datasetError } = await supabase
+      .from("datasets")
+      .select("id")
+      .eq("name", "QuickBooks Time Job Codes")
+      .limit(1);
+    if (datasetError) throw datasetError;
+    const datasetId = datasets?.[0]?.id;
+    if (!datasetId) return emptyQbFilterOptions();
+
+    const rows = [];
+    const batchSize = 1000;
+    for (let start = 0; start < 10000; start += batchSize) {
+      const { data, error } = await supabase
+        .from("records")
+        .select("json_data")
+        .eq("dataset_id", datasetId)
+        .range(start, start + batchSize - 1);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < batchSize) break;
+    }
+    return buildJobcodeReferenceOptions(rows);
+  } catch (error) {
+    console.warn("Dashboard job-code reference fallback failed.", error.message);
+    return emptyQbFilterOptions();
+  }
+}
+
+function buildJobcodeReferenceOptions(rows = []) {
+  const options = emptyQbFilterOptions();
+  const jobcodes = new Map();
+  for (const row of rows) {
+    const data = row?.json_data || row || {};
+    const rawId = String(data.id || "").trim();
+    const parentId = String(data.parent_id || "").trim();
+    const name = cleanJobcodeLabel(data.name) || cleanJobcodeLabel(data.short_code);
+    if (!rawId || !name) continue;
+    jobcodes.set(rawId, {
+      raw_id: rawId,
+      raw_parent_id: parentId && parentId !== "0" ? parentId : "",
+      name,
+    });
+  }
+
+  const level1 = new Map();
+  const level2 = new Map();
+  const level3 = new Map();
+  for (const rawId of jobcodes.keys()) {
+    const path = jobcodeReferencePath(rawId, jobcodes);
+    if (!path.level1_name) continue;
+    level1.set(path.level1_name, {
+      id: path.level1_name,
+      name: path.level1_name,
+      raw_id: path.level1_raw_id,
+    });
+    if (path.level2_name) {
+      level2.set(`${path.level1_name}|${path.level2_name}`, {
+        id: path.level2_name,
+        name: path.level2_name,
+        parent_id: path.level1_name,
+        parent_name: path.level1_name,
+        raw_id: path.level2_raw_id,
+        parent_raw_id: path.level1_raw_id,
+      });
+    }
+    if (path.level3_name) {
+      level3.set(`${path.level1_name}|${path.level2_name}|${path.level3_name}`, {
+        id: path.level3_name,
+        name: path.level3_name,
+        parent_id: path.level2_name,
+        parent_name: path.level2_name,
+        grandparent_id: path.level1_name,
+        grandparent_name: path.level1_name,
+        raw_id: path.level3_raw_id,
+        parent_raw_id: path.level2_raw_id,
+        grandparent_raw_id: path.level1_raw_id,
+      });
+    }
+  }
+
+  options.jobcode_level1 = sortByName(Array.from(level1.values()));
+  options.jobcode_level2 = sortByName(Array.from(level2.values()));
+  options.jobcode_level3 = sortByName(Array.from(level3.values()));
+  return options;
+}
+
+function jobcodeReferencePath(rawId, jobcodes) {
+  const leaf = jobcodes.get(String(rawId || ""));
+  if (!leaf) return {};
+  const parent = leaf.raw_parent_id ? jobcodes.get(leaf.raw_parent_id) : null;
+  const root = parent?.raw_parent_id ? jobcodes.get(parent.raw_parent_id) : null;
+  if (root) {
+    return {
+      level1_name: root.name,
+      level1_raw_id: root.raw_id,
+      level2_name: parent.name,
+      level2_raw_id: parent.raw_id,
+      level3_name: leaf.name,
+      level3_raw_id: leaf.raw_id,
+    };
+  }
+  if (parent) {
+    return {
+      level1_name: parent.name,
+      level1_raw_id: parent.raw_id,
+      level2_name: leaf.name,
+      level2_raw_id: leaf.raw_id,
+    };
+  }
+  return {
+    level1_name: leaf.name,
+    level1_raw_id: leaf.raw_id,
+  };
+}
+
 function buildFilterOptionsFromRollup(data = {}) {
   const options = emptyQbFilterOptions();
   const employees = new Map();
@@ -1161,7 +1280,8 @@ function mergeOptionRows(primary = [], fallback = []) {
   for (const row of [...fallback, ...primary]) {
     const name = cleanJobcodeLabel(row?.name) || cleanEmployeeLabel(row?.name);
     if (!name) continue;
-    rows.set(name, { ...row, id: String(row.id || name), name });
+    const key = [row?.grandparent_name, row?.parent_name, name].filter(Boolean).join("|") || name;
+    rows.set(key, { ...row, id: String(row.id || name), name });
   }
   return sortByName(Array.from(rows.values()));
 }
