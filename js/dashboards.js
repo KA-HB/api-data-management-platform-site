@@ -10,6 +10,9 @@ let availableDatasets = [];
 let lastSummary = null;
 let lastGeneralCoverage = null;
 const RAW_ROLLUP_BATCH_SIZE = 1000;
+const FILTER_OPTION_BATCH_SIZE = 1000;
+const FILTER_OPTION_SCAN_LIMIT = 100000;
+const FILTER_OPTION_CACHE_TTL_MS = 10 * 60 * 1000;
 const AUTOMATIC_RAW_ROLLUP_FALLBACK = readBooleanFlag("data-platform-raw-rollup-fallback");
 
 function readBooleanFlag(key) {
@@ -93,8 +96,8 @@ async function loadDashboard() {
 
     lastSummary = summary;
     const rpcFilterOptions = normalizeFilterOptions(qbOptions?.data);
-    const needsJobcodeFallback = !hasUsableJobcodeOptions(rpcFilterOptions);
-    const jobcodeReferenceOptions = needsJobcodeFallback ? await loadJobcodeReferenceOptions() : emptyQbFilterOptions();
+    const rawServiceItemOptionsPromise = loadRawServiceItemOptions();
+    const jobcodeReferenceOptions = await loadJobcodeReferenceOptions();
     qbFilterOptions = mergeFilterOptions(rpcFilterOptions, jobcodeReferenceOptions);
     populateQbFilters(qbFilterOptions);
 
@@ -116,6 +119,7 @@ async function loadDashboard() {
     renderRecentUploads(isExperienceDashboard() ? summary.recent_uploads || [] : [...availableDatasets].sort((a, b) => Number(b.record_count || 0) - Number(a.record_count || 0)));
     renderRecentSyncs(summary.recent_syncs || []);
     renderRecentLogs(logs || []);
+    hydrateServiceItemOptions(rawServiceItemOptionsPromise);
   } catch (error) {
     stopProgress(progress, `Error loading dashboard: ${error.message}`, "error");
   }
@@ -1095,14 +1099,6 @@ function normalizeFilterOptions(options = {}) {
   };
 }
 
-function hasUsableJobcodeOptions(options = {}) {
-  return usableJobcodeOptionCount(options.jobcode_level1) > 0
-    && usableJobcodeOptionCount(options.jobcode_level2) > 0;
-}
-
-function usableJobcodeOptionCount(rows = []) {
-  return (rows || []).filter((row) => cleanJobcodeLabel(row?.name)).length;
-}
 
 async function loadJobcodeReferenceOptions() {
   try {
@@ -1131,6 +1127,92 @@ async function loadJobcodeReferenceOptions() {
   } catch (error) {
     console.warn("Dashboard job-code reference fallback failed.", error.message);
     return emptyQbFilterOptions();
+  }
+}
+async function hydrateServiceItemOptions(optionsPromise) {
+  try {
+    const rawServiceItemOptions = await optionsPromise;
+    if (!rawServiceItemOptions?.service_items?.length) return;
+    const previousCount = normalizeFilterOptions(qbFilterOptions).service_items.length;
+    qbFilterOptions = mergeFilterOptions(qbFilterOptions, rawServiceItemOptions);
+    if (normalizeFilterOptions(qbFilterOptions).service_items.length !== previousCount) populateQbFilters(qbFilterOptions);
+  } catch (error) {
+    console.warn("Dashboard service-item hydration failed.", error.message);
+  }
+}
+async function loadRawServiceItemOptions() {
+  try {
+    const datasets = availableDatasets.filter((dataset) =>
+      dataset.name === "QuickBooks Time Timesheets" ||
+      (dataset.source_type === "quickbooks_time" && /timesheets/i.test(dataset.name || ""))
+    );
+    if (!datasets.length) return emptyQbFilterOptions();
+
+    const cacheKey = serviceItemCacheKey(datasets);
+    const cached = readFilterOptionCache(cacheKey);
+    if (cached) return cached;
+
+    const serviceItems = new Set();
+    for (const dataset of datasets) {
+      const rows = await fetchServiceItemRows(dataset.id);
+      for (const row of rows) {
+        const data = row?.json_data || {};
+        const service = cleanServiceLabel(data.customfields?.["53105"] || data["service item"] || data.service_item);
+        if (service) serviceItems.add(service);
+      }
+    }
+
+    const options = {
+      ...emptyQbFilterOptions(),
+      service_items: Array.from(serviceItems).sort((a, b) => a.localeCompare(b)),
+    };
+    writeFilterOptionCache(cacheKey, options);
+    return options;
+  } catch (error) {
+    console.warn("Dashboard service-item fallback failed.", error.message);
+    return emptyQbFilterOptions();
+  }
+}
+
+async function fetchServiceItemRows(datasetId) {
+  const rows = [];
+  for (let start = 0; start < FILTER_OPTION_SCAN_LIMIT; start += FILTER_OPTION_BATCH_SIZE) {
+    const { data, error } = await supabase
+      .from("records")
+      .select("json_data")
+      .eq("dataset_id", datasetId)
+      .not("duration_seconds", "is", null)
+      .range(start, start + FILTER_OPTION_BATCH_SIZE - 1);
+    if (error) throw error;
+    rows.push(...(data || []));
+    if (!data || data.length < FILTER_OPTION_BATCH_SIZE) break;
+  }
+  return rows;
+}
+
+function serviceItemCacheKey(datasets) {
+  const signature = datasets
+    .map((dataset) => [dataset.id, dataset.record_count, dataset.updated_at].join(":"))
+    .sort()
+    .join("|");
+  return `dashboard-service-items:${signature}`;
+}
+
+function readFilterOptionCache(key) {
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(key) || "null");
+    if (!cached || Date.now() - numeric(cached.cached_at) > FILTER_OPTION_CACHE_TTL_MS) return null;
+    return normalizeFilterOptions(cached.options);
+  } catch {
+    return null;
+  }
+}
+
+function writeFilterOptionCache(key, options) {
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ cached_at: Date.now(), options }));
+  } catch {
+    // Cache is only a speed optimization.
   }
 }
 
@@ -1302,13 +1384,33 @@ function mergeOptionRows(primary = [], fallback = []) {
     const name = cleanJobcodeLabel(row?.name) || cleanEmployeeLabel(row?.name);
     if (!name) continue;
     const key = [row?.grandparent_name, row?.parent_name, name].filter(Boolean).join("|") || name;
-    rows.set(key, { ...row, id: String(row.id || name), name });
+    const existing = rows.get(key) || {};
+    const rowId = String(row?.id || "").trim();
+    const rawId = row?.raw_id || existing.raw_id || (rowId && !cleanJobcodeLabel(rowId) ? rowId : null);
+    rows.set(key, {
+      ...existing,
+      ...row,
+      id: optionValue({ ...row, name }),
+      name,
+      raw_id: rawId,
+      parent_id: row?.parent_id || existing.parent_id,
+      parent_name: row?.parent_name || existing.parent_name,
+      parent_raw_id: row?.parent_raw_id || existing.parent_raw_id,
+      grandparent_id: row?.grandparent_id || existing.grandparent_id,
+      grandparent_name: row?.grandparent_name || existing.grandparent_name,
+      grandparent_raw_id: row?.grandparent_raw_id || existing.grandparent_raw_id,
+    });
   }
   return sortByName(Array.from(rows.values()));
 }
 
 function sortByName(rows) {
   return rows.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+}
+
+function optionValue(row) {
+  const readable = cleanJobcodeLabel(row?.name) || cleanServiceLabel(row?.name) || cleanEmployeeLabel(row?.name);
+  return String(readable || row?.id || "");
 }
 
 function fillEmployeeOptions(rows) {
@@ -1353,18 +1455,18 @@ function refreshDependentJobFilters() {
   const selectedLevel1 = $("#filter-jobcode-1")?.value || "";
   const selectedLevel2 = $("#filter-jobcode-2")?.value || "";
   const selectedLevel3 = $("#filter-jobcode-3")?.value || "";
-  const level2 = (qbFilterOptions.jobcode_level2 || []).filter((row) => !selectedLevel1 || row.parent_id === selectedLevel1);
+  const level2 = (qbFilterOptions.jobcode_level2 || []).filter((row) => !selectedLevel1 || optionMatches(row, selectedLevel1, ["parent_id", "parent_name", "parent_raw_id"]));
   fillSelect("#filter-jobcode-2", level2, "All Job Code 2", { hideNumericNames: true });
-  if (selectedLevel2 && level2.some((row) => row.id === selectedLevel2)) $("#filter-jobcode-2").value = selectedLevel2;
+  if (selectedLevel2 && level2.some((row) => optionMatches(row, selectedLevel2, ["id", "name", "raw_id"]))) $("#filter-jobcode-2").value = selectedLevel2;
 
   const nextLevel2 = $("#filter-jobcode-2")?.value || "";
   const level3 = (qbFilterOptions.jobcode_level3 || []).filter((row) => {
-    if (nextLevel2) return row.parent_id === nextLevel2;
-    if (selectedLevel1) return row.grandparent_id === selectedLevel1;
+    if (nextLevel2) return optionMatches(row, nextLevel2, ["parent_id", "parent_name", "parent_raw_id"]);
+    if (selectedLevel1) return optionMatches(row, selectedLevel1, ["grandparent_id", "grandparent_name", "grandparent_raw_id"]);
     return true;
   });
   fillSelect("#filter-jobcode-3", level3, "All Job Code 3", { hideNumericNames: true });
-  if (selectedLevel3 && level3.some((row) => row.id === selectedLevel3)) $("#filter-jobcode-3").value = selectedLevel3;
+  if (selectedLevel3 && level3.some((row) => optionMatches(row, selectedLevel3, ["id", "name", "raw_id"]))) $("#filter-jobcode-3").value = selectedLevel3;
 }
 
 function fillSelect(selector, rows, placeholder, { hideNumericNames = false } = {}) {
@@ -1372,8 +1474,8 @@ function fillSelect(selector, rows, placeholder, { hideNumericNames = false } = 
   if (!select) return;
   const current = select.value;
   const cleanRows = (rows || []).filter((row) => row?.id && row?.name && (!hideNumericNames || cleanJobcodeLabel(row.name)));
-  select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${cleanRows.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}</option>`).join("")}`;
-  if (current && cleanRows.some((row) => row.id === current)) select.value = current;
+  select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${cleanRows.map((row) => `<option value="${escapeHtml(optionValue(row))}">${escapeHtml(row.name)}</option>`).join("")}`;
+  if (current && cleanRows.some((row) => optionMatches(row, current, ["id", "name", "raw_id"]))) select.value = current;
 }
 
 function renderChart(selector, type, rows, labelKey, valueKey, label) {
