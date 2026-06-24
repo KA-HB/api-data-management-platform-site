@@ -26,11 +26,11 @@ if (profile) {
   await loadDashboard();
   $("#project-experience-lookup")?.addEventListener("submit", searchProjectExperience);
   $("#clear-project-experience")?.addEventListener("click", clearProjectExperienceLookup);
+  $("#dashboard-qb-sync")?.addEventListener("click", syncQuickBooksTime);
 
   if (profile.role === "admin") {
     $("#qb-viz-filters")?.addEventListener("submit", applyQbFilters);
     $("#clear-qb-filters")?.addEventListener("click", clearQbFilters);
-    $("#dashboard-qb-sync")?.addEventListener("click", syncQuickBooksTime);
     $("#filter-dataset")?.addEventListener("change", () => {
       updateDatasetIndicator();
       loadQbVisuals();
@@ -76,7 +76,7 @@ async function loadDashboard() {
     const [{ data: summary, error }, { data: logs }, qbOptions] = await Promise.all([
       supabase.rpc("dashboard_summary"),
       supabase.from("activity_logs").select("action,details,created_at").order("created_at", { ascending: false }).limit(8),
-      profile.role === "admin" ? supabase.rpc("dashboard_qbtime_filter_options") : Promise.resolve({ data: null, error: null }),
+      supabase.rpc("dashboard_qbtime_filter_options"),
     ]);
 
     if (error) return stopProgress(progress, error.message, "error");
@@ -1051,6 +1051,7 @@ function populateQbFilters(options) {
   fillEmployeeOptions(options.employees || []);
   fillSelect("#filter-jobcode-1", options.jobcode_level1 || [], "All Job Code 1", { hideNumericNames: true });
   fillSelect("#filter-service-item", (options.service_items || []).map((name) => ({ id: name, name })), "All service items");
+  fillProjectLookupOptions(options);
   refreshDependentJobFilters();
 }
 
@@ -1060,6 +1061,21 @@ function fillEmployeeOptions(rows) {
   const cleanRows = (rows || []).filter((row) => row?.id && row?.name && !/^\d+$/.test(String(row.name).trim()));
   list.innerHTML = cleanRows
     .map((row) => `<option value="${escapeHtml(row.name)}" label="${escapeHtml(row.id)}"></option>`)
+    .join("");
+}
+
+function fillProjectLookupOptions(options) {
+  fillDatalist("#project-jobcode-1-options", options.jobcode_level1 || []);
+  fillDatalist("#project-jobcode-2-options", options.jobcode_level2 || [], (row) => row.parent_name);
+}
+
+function fillDatalist(selector, rows, labelFn = null) {
+  const list = $(selector);
+  if (!list) return;
+  const seen = new Set();
+  const cleanRows = (rows || []).filter((row) => row?.id && row?.name && cleanJobcodeLabel(row.name) && !seen.has(row.name) && seen.add(row.name));
+  list.innerHTML = cleanRows
+    .map((row) => `<option value="${escapeHtml(row.name)}"${labelFn ? ` label="${escapeHtml(labelFn(row) || "")}"` : ""}></option>`)
     .join("");
 }
 

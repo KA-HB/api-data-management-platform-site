@@ -46,8 +46,11 @@ Deno.serve(async (req) => {
   const { data: auth } = await userSupabase.auth.getUser();
   if (!auth.user) return jsonResponse({ error: "Authentication required" }, 401);
 
-  const { data: profile } = await userSupabase.from("profiles").select("role").eq("id", auth.user.id).single();
-  if (profile?.role !== "admin") return jsonResponse({ error: "Admin role required" }, 403);
+  const { data: profile } = await userSupabase.from("profiles").select("role,active").eq("id", auth.user.id).single();
+  if (!profile?.active) return jsonResponse({ error: "Active user profile required" }, 403);
+  const isAdmin = profile.role === "admin";
+  const isManualSync = req.method === "POST" && action === "sync";
+  if (!isAdmin && !isManualSync) return jsonResponse({ error: "Admin role required" }, 403);
 
   const service = serviceClient();
 
