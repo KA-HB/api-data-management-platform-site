@@ -509,13 +509,13 @@ function maxDate(values) {
 }
 
 async function rawQbRollupFallback(payload, cachedData, cachedError) {
-  if (!AUTOMATIC_RAW_ROLLUP_FALLBACK) return null;
   if (cachedError || !availableDatasets.length) return null;
   const timesheetDatasets = rawTimesheetDatasets(payload);
   if (!timesheetDatasets.length) return null;
   const cachedEnd = cachedData?.date_end;
   const rebuildForBadJobcodes = hasPoorJobcodeCoverage(cachedData);
-  if (!AUTOMATIC_RAW_ROLLUP_FALLBACK && !cachedEnd && !rebuildForBadJobcodes) return null;
+  if (!AUTOMATIC_RAW_ROLLUP_FALLBACK && !rebuildForBadJobcodes) return null;
+  if (!rebuildForBadJobcodes && !cachedEnd) return null;
   if (!rebuildForBadJobcodes && cachedEnd && payload.end_date && String(payload.end_date) <= String(cachedEnd)) return null;
   if (!rebuildForBadJobcodes && cachedEnd && !(await hasNewerRawTimesheets(timesheetDatasets, cachedEnd))) return null;
 
@@ -545,6 +545,8 @@ function hasPoorJobcodeCoverage(data) {
   if (!data) return false;
   const detailRows = data.experience_rows || [];
   const jobRows = data.hours_by_jobcode || [];
+  const hasActivity = numeric(data.filtered_timesheets) > 0 || numeric(data.filtered_hours) > 0;
+  if (hasActivity && !detailRows.length && !jobRows.length) return true;
   const badDetailRows = detailRows.filter((row) => !cleanJobcodeLabel(row.jobcode_level1) || !cleanJobcodeLabel(row.jobcode_level2));
   const jobHours = sumValues(jobRows, "hours");
   const unassignedHours = sumValues(jobRows.filter((row) => !isDisplayJobcodeLabel(row.jobcode)), "hours");
