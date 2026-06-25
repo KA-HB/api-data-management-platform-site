@@ -13,6 +13,7 @@ const RAW_ROLLUP_BATCH_SIZE = 1000;
 const FILTER_OPTION_BATCH_SIZE = 1000;
 const FILTER_OPTION_SCAN_LIMIT = 100000;
 const FILTER_OPTION_CACHE_TTL_MS = 10 * 60 * 1000;
+const EXCLUDED_ADMIN_JOBCODE_PATTERN = /(^|[\s\-_:/])(?:pto|sick|holiday|overhead)(?=$|[\s\-_:/])/i;
 const AUTOMATIC_RAW_ROLLUP_FALLBACK = readBooleanFlag("data-platform-raw-rollup-fallback");
 
 function readBooleanFlag(key) {
@@ -894,7 +895,12 @@ function cleanJobcodeLabel(value) {
   const label = String(value || "").replace(/\s+/g, " ").trim();
   if (!label || label === "0" || /^[0-9]+$/.test(label)) return null;
   if (/^(unassigned|not specified|no job code( [123])?)$/i.test(label)) return null;
+  if (isExcludedAdminJobcode(label)) return null;
   return label;
+}
+
+function isExcludedAdminJobcode(value) {
+  return EXCLUDED_ADMIN_JOBCODE_PATTERN.test(String(value || "").trim());
 }
 
 function displayJobcodeLabel(value, fallback = "Unassigned") {
@@ -1034,6 +1040,16 @@ function addServicePathOptions(level1, level2, level3, value) {
   const path = servicePathFromLabel(value);
   if (!path.level1) return;
   level1.set(path.level1, { id: path.level1, name: path.level1, derived_from_service_path: true });
+  if (path.jobcode && path.jobcode !== path.level1) {
+    level1.set(path.jobcode, {
+      id: path.jobcode,
+      name: path.jobcode,
+      parent_id: path.level1,
+      parent_name: path.level1,
+      derived_from_service_path: true,
+      leaf_jobcode: true,
+    });
+  }
   if (path.level2) {
     level2.set(`${path.level1}|${path.level2}`, {
       id: path.level2,
@@ -1307,7 +1323,7 @@ function serviceItemCacheKey(datasets) {
     .map((dataset) => [dataset.id, dataset.record_count, dataset.updated_at].join(":"))
     .sort()
     .join("|");
-  return `dashboard-service-items:v2:${signature}`;
+  return `dashboard-service-items:v3:${signature}`;
 }
 
 function readFilterOptionCache(key) {
@@ -1350,6 +1366,17 @@ function buildJobcodeReferenceOptions(rows = []) {
   for (const rawId of jobcodes.keys()) {
     const path = jobcodeReferencePath(rawId, jobcodes);
     if (!path.level1_name) continue;
+    const leafName = cleanJobcodeLabel(path.level3_name) || cleanJobcodeLabel(path.level2_name) || cleanJobcodeLabel(path.level1_name);
+    if (leafName) {
+      level1.set(leafName, {
+        id: leafName,
+        name: leafName,
+        raw_id: path.level3_raw_id || path.level2_raw_id || path.level1_raw_id,
+        parent_id: path.level2_name || path.level1_name,
+        parent_name: path.level2_name || path.level1_name,
+        leaf_jobcode: true,
+      });
+    }
     level1.set(path.level1_name, {
       id: path.level1_name,
       name: path.level1_name,
