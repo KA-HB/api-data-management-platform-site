@@ -297,7 +297,8 @@ function renderProjectExperience(rows) {
 
 async function callQbRollups(payload, options = {}) {
   const result = await callQbRollupOnce(payload);
-  const fallbackOptions = { ...options, forceRawRebuild: options.forceRawRebuild || Boolean(payload._derived_jobcode_filter) };
+  const hasJobcodeFilter = Boolean(payload._derived_jobcode_filter || payload.jobcode_level1_filter || payload.jobcode_level2_filter || payload.jobcode_level3_filter);
+  const fallbackOptions = { ...options, forceRawRebuild: options.forceRawRebuild || hasJobcodeFilter };
   const rawFallback = await rawQbRollupFallback(payload, result.data, result.error, fallbackOptions);
   if (rawFallback) return rawFallback;
   if (!shouldExpandJobcodeFilter(payload, result.data, result.error)) return result;
@@ -1084,9 +1085,6 @@ function normalizeDerivedJobcodePayload(payload) {
   const mostSpecific = derived[derived.length - 1][1];
   next._derived_jobcode_filter = mostSpecific;
   next.keyword_filter = [next.keyword_filter, mostSpecific].filter(Boolean).join(" ") || null;
-  next.jobcode_level1_filter = null;
-  next.jobcode_level2_filter = null;
-  next.jobcode_level3_filter = null;
   return next;
 }
 
@@ -1309,7 +1307,7 @@ function serviceItemCacheKey(datasets) {
     .map((dataset) => [dataset.id, dataset.record_count, dataset.updated_at].join(":"))
     .sort()
     .join("|");
-  return `dashboard-service-items:${signature}`;
+  return `dashboard-service-items:v2:${signature}`;
 }
 
 function readFilterOptionCache(key) {
