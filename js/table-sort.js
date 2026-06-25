@@ -1,5 +1,6 @@
 (() => {
   const sortableTables = [
+    "#project-experience-body",
     "#employee-experience-body",
     "#experience-detail-body",
   ];
