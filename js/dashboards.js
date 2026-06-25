@@ -297,7 +297,8 @@ function renderProjectExperience(rows) {
 
 async function callQbRollups(payload, options = {}) {
   const result = await callQbRollupOnce(payload);
-  const rawFallback = await rawQbRollupFallback(payload, result.data, result.error, options);
+  const fallbackOptions = { ...options, forceRawRebuild: options.forceRawRebuild || Boolean(payload._derived_jobcode_filter) };
+  const rawFallback = await rawQbRollupFallback(payload, result.data, result.error, fallbackOptions);
   if (rawFallback) return rawFallback;
   if (!shouldExpandJobcodeFilter(payload, result.data, result.error)) return result;
 
@@ -305,7 +306,7 @@ async function callQbRollups(payload, options = {}) {
   if (!expandedPayloads.length) return result;
 
   const expandedResults = await callExpandedQbRollups(expandedPayloads);
-  const expandedRawFallback = await rawQbRollupFallback(payload, expandedResults.data, expandedResults.error, options);
+  const expandedRawFallback = await rawQbRollupFallback(payload, expandedResults.data, expandedResults.error, fallbackOptions);
   if (expandedRawFallback) return expandedRawFallback;
   if (expandedResults.error) return result;
   if (!numeric(expandedResults.data?.filtered_timesheets)) return result;
@@ -313,17 +314,22 @@ async function callQbRollups(payload, options = {}) {
 }
 
 async function callQbRollupOnce(payload) {
-  const result = await supabase.rpc("dashboard_qbtime_rollups", payload);
+  const rpcPayload = rpcSafePayload(payload);
+  const result = await supabase.rpc("dashboard_qbtime_rollups", rpcPayload);
   if (!isSchemaCacheError(result.error)) return result;
-  if (payload.dataset_uuid) {
+  if (rpcPayload.dataset_uuid) {
     return { data: null, error: { message: "Dataset-specific dashboard filtering requires the latest Supabase dashboard migration." } };
   }
-  const legacyPayload = { ...payload };
+  const legacyPayload = { ...rpcPayload };
   delete legacyPayload.dataset_uuid;
   const legacyResult = await supabase.rpc("dashboard_qbtime_rollups", legacyPayload);
   if (!isSchemaCacheError(legacyResult.error)) return legacyResult;
   delete legacyPayload.keyword_filter;
   return supabase.rpc("dashboard_qbtime_rollups", legacyPayload);
+}
+
+function rpcSafePayload(payload) {
+  return Object.fromEntries(Object.entries(payload || {}).filter(([key]) => !key.startsWith("_")));
 }
 
 function shouldExpandJobcodeFilter(payload, data, error) {
@@ -518,7 +524,8 @@ async function rawQbRollupFallback(payload, cachedData, cachedError, options = {
   if (cachedError || !availableDatasets.length) return null;
   const allowDeltaFallback = options.allowDeltaFallback ?? AUTOMATIC_RAW_ROLLUP_FALLBACK;
   const allowJobcodeRebuild = options.allowJobcodeRebuild ?? AUTOMATIC_RAW_ROLLUP_FALLBACK;
-  const rebuildForBadJobcodes = allowJobcodeRebuild && hasPoorJobcodeCoverage(cachedData);
+  const forceRawRebuild = Boolean(options.forceRawRebuild);
+  const rebuildForBadJobcodes = forceRawRebuild || (allowJobcodeRebuild && hasPoorJobcodeCoverage(cachedData));
   if (!allowDeltaFallback && !rebuildForBadJobcodes) return null;
   const timesheetDatasets = rawTimesheetDatasets(payload);
   if (!timesheetDatasets.length) return null;
@@ -763,9 +770,11 @@ function rawExperienceRow(row, employees, jobcodes) {
     || "Unassigned";
   if (!employee || /^[0-9]+$/.test(employee)) return null;
   const jobPath = jobcodes.get(String(data.jobcode_id || "").trim());
-  const level1 = cleanJobcodeLabel(jobPath?.level1_name) || cleanJobcodeLabel(data.jobcode_1) || "";
-  const level2 = cleanJobcodeLabel(jobPath?.level2_name) || cleanJobcodeLabel(data.jobcode_2) || "";
-  const level3 = cleanJobcodeLabel(jobPath?.level3_name) || cleanJobcodeLabel(data.jobcode_3) || "";
+  const serviceLabel = bestServiceItemValue(data);
+  const servicePath = servicePathFromLabel(serviceLabel);
+  const level1 = cleanJobcodeLabel(jobPath?.level1_name) || cleanJobcodeLabel(data.jobcode_1) || servicePath.level1 || "";
+  const level2 = cleanJobcodeLabel(jobPath?.level2_name) || cleanJobcodeLabel(data.jobcode_2) || servicePath.level2 || "";
+  const level3 = cleanJobcodeLabel(jobPath?.level3_name) || cleanJobcodeLabel(data.jobcode_3) || servicePath.level3 || "";
   const jobcode = level3 || level2 || level1 || cleanJobcodeLabel(data.jobcode_name) || cleanJobcodeLabel(jobPath?.name) || cleanJobcodeLabel(data.name) || cleanJobcodeLabel(data.short_code) || "Unassigned";
   return {
     record_id: row.id,
@@ -784,7 +793,7 @@ function rawExperienceRow(row, employees, jobcodes) {
     jobcode_level2_id: jobPath?.level2_id || "",
     jobcode_level3_id: jobPath?.level3_id || "",
     jobcode,
-    service_item: displayServiceLabel(data.customfields?.["53105"] || data["service item"] || data.service_item),
+    service_item: displayServiceLabel(serviceLabel),
   };
 }
 
@@ -977,6 +986,29 @@ function cleanServiceLabel(value) {
   return label;
 }
 
+function serviceItemValues(data = {}) {
+  const values = [
+    data.customfields?.["53105"],
+    data["service item"],
+    data.service_item,
+    data.serviceItem,
+    data.service,
+  ];
+  const customfields = data.customfields;
+  if (customfields && typeof customfields === "object") {
+    const entries = Array.isArray(customfields) ? customfields : Object.values(customfields);
+    for (const entry of entries) {
+      if (typeof entry === "string") values.push(entry);
+      if (entry && typeof entry === "object") values.push(entry.value, entry.name, entry.label);
+    }
+  }
+  return Array.from(new Set(values.map(cleanServiceLabel).filter(Boolean)));
+}
+
+function bestServiceItemValue(data = {}) {
+  const values = serviceItemValues(data);
+  return values.find((value) => value.includes(":")) || values[0] || null;
+}
 function displayServiceLabel(value) {
   return servicePathFromLabel(value).service || cleanServiceLabel(value) || "No service item";
 }
@@ -1050,6 +1082,7 @@ function normalizeDerivedJobcodePayload(payload) {
   ].filter(([, value]) => isDerivedServicePathSelection(value));
   if (!derived.length) return next;
   const mostSpecific = derived[derived.length - 1][1];
+  next._derived_jobcode_filter = mostSpecific;
   next.keyword_filter = [next.keyword_filter, mostSpecific].filter(Boolean).join(" ") || null;
   next.jobcode_level1_filter = null;
   next.jobcode_level2_filter = null;
@@ -1242,8 +1275,7 @@ async function loadRawServiceItemOptions() {
       const rows = await fetchServiceItemRows(dataset.id);
       for (const row of rows) {
         const data = row?.json_data || {};
-        const service = cleanServiceLabel(data.customfields?.["53105"] || data["service item"] || data.service_item);
-        if (service) serviceItems.add(service);
+        for (const service of serviceItemValues(data)) serviceItems.add(service);
       }
     }
 
