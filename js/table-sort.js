@@ -4,14 +4,21 @@
     "#experience-detail-body",
   ];
   const sortState = new WeakMap();
-  const observerState = new WeakSet();
 
-  document.addEventListener("DOMContentLoaded", () => {
+  ready(() => {
     for (const selector of sortableTables) {
       const body = document.querySelector(selector);
       if (body) makeTableSortable(body.closest("table"));
     }
   });
+
+  function ready(callback) {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", callback, { once: true });
+    } else {
+      callback();
+    }
+  }
 
   function makeTableSortable(table) {
     if (!table || table.dataset.sortableReady === "true") return;
@@ -23,6 +30,8 @@
     table.classList.add("sortable-table");
 
     headers.forEach((header, index) => {
+      const label = header.textContent.trim();
+      header.dataset.sortLabel = label;
       header.tabIndex = 0;
       header.role = "button";
       header.dataset.sortIndex = String(index);
@@ -36,48 +45,35 @@
         }
       });
     });
-
-    observeTableBody(table, body);
-  }
-
-  function observeTableBody(table, body) {
-    if (observerState.has(body)) return;
-    observerState.add(body);
-    const observer = new MutationObserver(() => {
-      const state = sortState.get(table);
-      if (!state || body.dataset.sorting === "true") return;
-      sortTable(table, state.index, state.direction, false);
-    });
-    observer.observe(body, { childList: true });
   }
 
   function toggleSort(table, index) {
     const previous = sortState.get(table);
     const direction = previous?.index === index && previous.direction === "asc" ? "desc" : "asc";
     sortState.set(table, { index, direction });
-    sortTable(table, index, direction, true);
+    sortTable(table, index, direction);
   }
 
-  function sortTable(table, index, direction, updateHeader) {
+  function sortTable(table, index, direction) {
     const body = table.querySelector("tbody");
     if (!body) return;
     const rows = Array.from(body.querySelectorAll("tr"));
     if (rows.length < 2) {
-      if (updateHeader) updateSortIndicators(table, index, direction);
+      updateSortIndicators(table, index, direction);
       return;
     }
 
-    body.dataset.sorting = "true";
+    const fragment = document.createDocumentFragment();
     rows
       .map((row, originalIndex) => ({ row, originalIndex, value: cellValue(row, index) }))
       .sort((left, right) => {
         const result = compareValues(left.value, right.value);
         return (direction === "asc" ? result : -result) || left.originalIndex - right.originalIndex;
       })
-      .forEach(({ row }) => body.appendChild(row));
-    delete body.dataset.sorting;
+      .forEach(({ row }) => fragment.appendChild(row));
 
-    if (updateHeader) updateSortIndicators(table, index, direction);
+    body.replaceChildren(fragment);
+    updateSortIndicators(table, index, direction);
   }
 
   function cellValue(row, index) {
@@ -115,7 +111,7 @@
 
   function updateSortIndicators(table, activeIndex, direction) {
     Array.from(table.querySelectorAll("thead th")).forEach((header, index) => {
-      const label = header.textContent.replace(/[▲▼]\s*$/, "").trim();
+      const label = header.dataset.sortLabel || header.textContent.replace(/[▲▼]\s*$/, "").trim();
       header.textContent = index === activeIndex ? `${label} ${direction === "asc" ? "▲" : "▼"}` : label;
       header.setAttribute("aria-sort", index === activeIndex ? (direction === "asc" ? "ascending" : "descending") : "none");
     });
