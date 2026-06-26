@@ -135,7 +135,7 @@ function renderGeneralDashboard(summary, coverage) {
   setText("#metric-raw-records", formatNumber(coverage?.raw_records ?? summary?.records));
   setText("#metric-records", formatNumber(coverage?.unique_records ?? summary?.records));
   setText("#metric-hours", formatNumber(coverage?.filtered_hours ?? coverage?.hours));
-  setText("#metric-employees", formatNumber(coverage?.filtered_employees ?? coverage?.employee_count));
+  setText("#metric-employees", formatNumber(dashboardEmployeeMetric(coverage)));
   setText("#metric-services", formatNumber(coverage?.filtered_service_items ?? coverage?.service_item_count));
   setText("#data-scope-summary", hasNoUserDatasets ? "No dashboard datasets are assigned to this user yet. An admin can grant QuickBooks Time dashboard access from User Management." : coverage ? scopeSummary(coverage) : `Showing ${formatNumber(summary?.records)} authorized records. Full-year hours, employees, service-item totals, and duplicate removal require the latest Supabase search migration.`);
 
@@ -145,6 +145,26 @@ function renderGeneralDashboard(summary, coverage) {
   renderExperienceOverview(coverage || {});
 }
 
+function dashboardEmployeeMetric(coverage = {}, payload = {}) {
+  if (!hasActiveQbFilters(payload) && numeric(coverage?.active_employee_count)) {
+    return numeric(coverage.active_employee_count);
+  }
+  return numeric(coverage?.filtered_employees ?? coverage?.employee_count);
+}
+
+function hasActiveQbFilters(payload = {}) {
+  return Boolean(
+    payload.dataset_uuid ||
+    payload.keyword_filter ||
+    payload.employee_filter ||
+    payload.start_date ||
+    payload.end_date ||
+    payload.jobcode_level1_filter ||
+    payload.jobcode_level2_filter ||
+    payload.jobcode_level3_filter ||
+    payload.service_item_filter
+  );
+}
 function buildFastCoverageSummary(summary) {
   const rows = availableDatasets.length ? availableDatasets : summary?.recent_uploads || [];
   const nonPtoRows = rows.filter((row) => !/pto/i.test(row.name || ""));
@@ -202,7 +222,7 @@ async function loadQbVisuals() {
   setText("#metric-raw-records", formatNumber(normalized.raw_records ?? normalized.filtered_timesheets));
   setText("#metric-records", formatNumber(normalized.unique_records ?? normalized.filtered_timesheets));
   setText("#metric-hours", formatNumber(normalized.filtered_hours));
-  setText("#metric-employees", formatNumber(normalized.filtered_employees));
+  setText("#metric-employees", formatNumber(dashboardEmployeeMetric(normalized, payload)));
   setText("#metric-services", formatNumber(normalized.filtered_service_items));
   setText("#qb-filter-summary", `${formatNumber(normalized.filtered_timesheets)} experience records, ${formatNumber(normalized.filtered_hours)} hours${dateRangeLabel(normalized)}`);
   setText("#data-scope-summary", scopeSummary(normalized));
@@ -1728,6 +1748,7 @@ function normalizeExperienceRollup(data = {}) {
     duplicates_removed: numeric(data.duplicates_removed),
     filtered_hours: numeric(data.filtered_hours ?? firstPositive(sumValues(dayRows, "hours"), sumValues(employeeRows, "hours"), sumValues(detailRows, "hours"))),
     filtered_employees: numeric(data.filtered_employees ?? employeeNames.length),
+    active_employee_count: numeric(data.active_employee_count),
     filtered_service_items: numeric(data.filtered_service_items ?? serviceNames.length),
     filtered_timesheets: numeric(data.filtered_timesheets ?? sumValues(employeeRows, "timesheets") ?? detailRows.length),
   };
