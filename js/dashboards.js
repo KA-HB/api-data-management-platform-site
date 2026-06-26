@@ -97,8 +97,8 @@ async function loadDashboard() {
 
     lastSummary = summary;
     const rpcFilterOptions = normalizeFilterOptions(qbOptions?.data);
-    const rawServiceItemOptionsPromise = loadRawServiceItemOptions();
-    const jobcodeReferenceOptions = await loadJobcodeReferenceOptions();
+    const needsReferenceFallback = qbOptions?.error || !rpcFilterOptions.jobcode_level1.length || !rpcFilterOptions.service_items.length;
+    const jobcodeReferenceOptions = needsReferenceFallback ? await loadJobcodeReferenceOptions() : emptyQbFilterOptions();
     qbFilterOptions = mergeFilterOptions(rpcFilterOptions, jobcodeReferenceOptions);
     populateQbFilters(qbFilterOptions);
 
@@ -120,7 +120,9 @@ async function loadDashboard() {
     renderRecentUploads(isExperienceDashboard() ? summary.recent_uploads || [] : [...availableDatasets].sort((a, b) => Number(b.record_count || 0) - Number(a.record_count || 0)));
     renderRecentSyncs(summary.recent_syncs || []);
     renderRecentLogs(logs || []);
-    hydrateServiceItemOptions(rawServiceItemOptionsPromise);
+    if (AUTOMATIC_RAW_ROLLUP_FALLBACK || !normalizeFilterOptions(qbFilterOptions).service_items.length) {
+      hydrateServiceItemOptions(loadRawServiceItemOptions());
+    }
   } catch (error) {
     stopProgress(progress, `Error loading dashboard: ${error.message}`, "error");
   }
