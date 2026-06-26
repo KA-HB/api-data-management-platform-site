@@ -301,7 +301,7 @@ function renderProjectExperience(rows) {
 async function callQbRollups(payload, options = {}) {
   const result = await callQbRollupOnce(payload);
   const hasJobcodeFilter = Boolean(payload._derived_jobcode_filter || payload.jobcode_level1_filter || payload.jobcode_level2_filter || payload.jobcode_level3_filter);
-  const fallbackOptions = { ...options, forceRawRebuild: options.forceRawRebuild || hasJobcodeFilter };
+  const fallbackOptions = { ...options, forceRawRebuild: Boolean(options.forceRawRebuild) };
   const rawFallback = await rawQbRollupFallback(payload, result.data, result.error, fallbackOptions);
   if (rawFallback) return rawFallback;
   if (!shouldExpandJobcodeFilter(payload, result.data, result.error)) return result;
