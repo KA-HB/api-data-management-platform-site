@@ -97,13 +97,19 @@ async function loadDashboard() {
 
     lastSummary = summary;
     const rpcFilterOptions = normalizeFilterOptions(qbOptions?.data);
+    const expectedEmployees = expectedActiveEmployeeCount();
     const needsReferenceFallback = qbOptions?.error || !rpcFilterOptions.jobcode_level1.length || !rpcFilterOptions.service_items.length;
-    const jobcodeReferenceOptions = needsReferenceFallback ? await loadJobcodeReferenceOptions() : emptyQbFilterOptions();
-    qbFilterOptions = mergeFilterOptions(rpcFilterOptions, jobcodeReferenceOptions);
+    const needsEmployeeFallback = expectedEmployees > 0 && rpcFilterOptions.employees.length < expectedEmployees;
+    const [jobcodeReferenceOptions, employeeReferenceOptions] = await Promise.all([
+      needsReferenceFallback ? loadJobcodeReferenceOptions() : emptyQbFilterOptions(),
+      needsEmployeeFallback ? loadActiveEmployeeOptions() : emptyQbFilterOptions(),
+    ]);
+    qbFilterOptions = mergeFilterOptions(mergeFilterOptions(rpcFilterOptions, jobcodeReferenceOptions), employeeReferenceOptions);
     populateQbFilters(qbFilterOptions);
 
     const experience = await callQbRollups(emptyQbPayload(), { allowDeltaFallback: false, allowJobcodeRebuild: false });
     lastGeneralCoverage = experience.data ? normalizeExperienceRollup(experience.data) : buildFastCoverageSummary(summary);
+    lastGeneralCoverage.active_employee_count = Math.max(numeric(lastGeneralCoverage.active_employee_count), normalizeFilterOptions(qbFilterOptions).employees.length);
     qbFilterOptions = mergeFilterOptions(qbFilterOptions, buildFilterOptionsFromRollup(lastGeneralCoverage));
     populateQbFilters(qbFilterOptions);
     if (qbOptions?.error) {
@@ -146,9 +152,8 @@ function renderGeneralDashboard(summary, coverage) {
 }
 
 function dashboardEmployeeMetric(coverage = {}, payload = {}) {
-  if (!hasActiveQbFilters(payload) && numeric(coverage?.active_employee_count)) {
-    return numeric(coverage.active_employee_count);
-  }
+  const rosterCount = Math.max(numeric(coverage?.active_employee_count), normalizeFilterOptions(qbFilterOptions).employees.length);
+  if (!hasActiveQbFilters(payload) && rosterCount) return rosterCount;
   return numeric(coverage?.filtered_employees ?? coverage?.employee_count);
 }
 
@@ -1254,6 +1259,57 @@ function normalizeFilterOptions(options = {}) {
 }
 
 
+function expectedActiveEmployeeCount() {
+  const employeeDataset = availableDatasets.find((dataset) => dataset.name === "QuickBooks Time Employees");
+  return numeric(employeeDataset?.record_count);
+}
+
+async function loadActiveEmployeeOptions() {
+  try {
+    const { data: datasets, error: datasetError } = await supabase
+      .from("datasets")
+      .select("id")
+      .eq("name", "QuickBooks Time Employees")
+      .limit(1);
+    if (datasetError) throw datasetError;
+    const datasetId = datasets?.[0]?.id;
+    if (!datasetId) return emptyQbFilterOptions();
+
+    const rows = [];
+    const batchSize = 1000;
+    for (let start = 0; start < 10000; start += batchSize) {
+      const { data, error } = await supabase
+        .from("records")
+        .select("json_data")
+        .eq("dataset_id", datasetId)
+        .range(start, start + batchSize - 1);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < batchSize) break;
+    }
+
+    const employees = new Map();
+    for (const row of rows) {
+      const data = row?.json_data || {};
+      const id = String(data.id || "").trim();
+      const active = data.active === true || data.active === "true";
+      const timeTracking = data.permissions?.time_tracking !== false;
+      const termDate = String(data.term_date || "0000-00-00").trim();
+      const name = cleanEmployeeLabel([data.first_name, data.last_name].filter(Boolean).join(" "))
+        || cleanEmployeeLabel(data.display_name)
+        || cleanEmployeeLabel(data.email)
+        || cleanEmployeeLabel(data.username);
+      if (id && active && timeTracking && (!termDate || termDate === "0000-00-00") && name) {
+        employees.set(id, { id, name });
+      }
+    }
+
+    return { ...emptyQbFilterOptions(), employees: sortByName(Array.from(employees.values())) };
+  } catch (error) {
+    console.warn("Dashboard employee reference fallback failed.", error.message);
+    return emptyQbFilterOptions();
+  }
+}
 async function loadJobcodeReferenceOptions() {
   try {
     const { data: datasets, error: datasetError } = await supabase
