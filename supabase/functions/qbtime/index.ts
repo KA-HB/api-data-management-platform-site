@@ -1,11 +1,13 @@
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { serviceClient, userClient } from "../_shared/supabase.ts";
 
-const resources: Array<{ endpoint: string; dataset: string; useDateRange?: boolean }> = [
+type SyncResource = { endpoint: string; dataset: string; useDateRange?: boolean; optional?: boolean };
+
+const resources: SyncResource[] = [
   { endpoint: "users", dataset: "Employees" },
   { endpoint: "timesheets", dataset: "Timesheets", useDateRange: true },
   { endpoint: "jobcodes", dataset: "Job Codes" },
-  { endpoint: "clients", dataset: "Customers" },
+  { endpoint: "clients", dataset: "Customers", optional: true },
   { endpoint: "groups", dataset: "Groups" },
   { endpoint: "customfields", dataset: "Custom Fields" },
 ];
@@ -147,6 +149,7 @@ async function runSync(supabase: ReturnType<typeof serviceClient>, options: Sync
   const { data: log } = await supabase.from("sync_logs").insert({ status: "running", started_at: started }).select("id").single();
   const stats: Record<string, number> = {};
   const errors: Array<{ dataset: string; message: string }> = [];
+  const warnings: Array<{ dataset: string; message: string }> = [];
 
   try {
     let accessToken = settings.access_token;
@@ -165,27 +168,41 @@ async function runSync(supabase: ReturnType<typeof serviceClient>, options: Sync
       try {
         stats[resource.dataset] = await syncResourceDataset(supabase, resource, accessToken, options);
       } catch (error) {
-        errors.push({ dataset: resource.dataset, message: error.message || "Sync failed" });
+        const message = syncErrorMessage(error);
+        if (resource.optional && isForbiddenSyncError(message)) {
+          warnings.push({ dataset: resource.dataset, message });
+        } else {
+          errors.push({ dataset: resource.dataset, message });
+        }
       }
     }
 
-    await supabase.rpc("grant_shared_qbtime_dataset_permissions", { target_user_id: null });
-    await supabase.rpc("refresh_dashboard_experience_records");
+    const permissionResult = await supabase.rpc("grant_shared_qbtime_dataset_permissions", { target_user_id: null });
+    if (permissionResult.error) throw permissionResult.error;
+    const refreshResult = await supabase.rpc("refresh_dashboard_experience_records");
+    if (refreshResult.error) throw refreshResult.error;
     await supabase.from("qbtime_settings").update({ last_sync: new Date().toISOString() }).eq("id", settings.id);
     const status = errors.length ? "partial" : "success";
     await supabase.from("sync_logs").update({
       status,
-      message: errors.map((error) => `${error.dataset}: ${error.message}`).join("; ") || null,
-      stats: { ...stats, mode: options.forceFullTimesheets ? "full" : "incremental", errors },
+      message: errors.map((error) => `${error.dataset}: ${error.message}`).join("; ") || warnings.map((warning) => `${warning.dataset}: ${warning.message}`).join("; ") || null,
+      stats: { ...stats, mode: options.forceFullTimesheets ? "full" : "incremental", errors, warnings },
       finished_at: new Date().toISOString(),
     }).eq("id", log.id);
-    return { status, stats, errors };
+    return { status, stats: { ...stats, mode: options.forceFullTimesheets ? "full" : "incremental", errors, warnings }, errors, warnings };
   } catch (error) {
     await supabase.from("sync_logs").update({ status: "failed", message: error.message, stats, finished_at: new Date().toISOString() }).eq("id", log.id);
     throw error;
   }
 }
 
+function syncErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error || "Sync failed");
+}
+
+function isForbiddenSyncError(message: string) {
+  return /(^|\D)403(\D|$)|forbidden/i.test(message);
+}
 async function refreshAccessToken(settings: Record<string, string>) {
   if (!settings.refresh_token) throw new Error("QuickBooks Time refresh token is missing");
   const response = await fetch(Deno.env.get("QB_TIME_TOKEN_URL") || "https://rest.tsheets.com/api/v1/grant", {
@@ -458,3 +475,4 @@ async function responseError(response: Response, fallback: string) {
   const clean = String(message || "").replace(/\s+/g, " ").slice(0, 240);
   return `${fallback}: ${response.status}${clean ? ` - ${clean}` : ""}`;
 }
+
