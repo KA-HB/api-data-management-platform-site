@@ -13,8 +13,17 @@ const resources: SyncResource[] = [
 ];
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  try {
+    return await handleRequest(req);
+  } catch (error) {
+    const message = syncErrorMessage(error);
+    console.error("QuickBooks Time function failed", message);
+    return jsonResponse({ error: message || "QuickBooks Time request failed" }, 500);
+  }
+});
 
+async function handleRequest(req: Request) {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   const url = new URL(req.url);
   const action = url.searchParams.get("action") || "settings";
   const forceFullTimesheets = fullSyncRequested(url);
@@ -112,8 +121,7 @@ Deno.serve(async (req) => {
   const { data, error } = await service.from("qbtime_settings").select("id,client_id,redirect_uri,tenant_info,last_sync,created_at,updated_at").order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (error) return jsonResponse({ error: error.message }, 400);
   return jsonResponse({ data });
-});
-
+}
 async function exchangeCode(settings: Record<string, string>, code: string) {
   const response = await fetch(Deno.env.get("QB_TIME_TOKEN_URL") || "https://rest.tsheets.com/api/v1/grant", {
     method: "POST",
@@ -178,9 +186,13 @@ async function runSync(supabase: ReturnType<typeof serviceClient>, options: Sync
     }
 
     const permissionResult = await supabase.rpc("grant_shared_qbtime_dataset_permissions", { target_user_id: null });
-    if (permissionResult.error) throw permissionResult.error;
+    if (permissionResult.error) {
+      warnings.push({ dataset: "Permissions", message: permissionResult.error.message });
+    }
     const refreshResult = await supabase.rpc("refresh_dashboard_experience_records");
-    if (refreshResult.error) throw refreshResult.error;
+    if (refreshResult.error) {
+      warnings.push({ dataset: "Dashboard Refresh", message: refreshResult.error.message });
+    }
     await supabase.from("qbtime_settings").update({ last_sync: new Date().toISOString() }).eq("id", settings.id);
     const status = errors.length ? "partial" : "success";
     await supabase.from("sync_logs").update({
