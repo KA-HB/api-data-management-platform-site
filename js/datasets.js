@@ -5,6 +5,24 @@ import { $, escapeHtml, renderRows, setButtonBusy, startProgress, stopProgress, 
 const profile = await requireAuth();
 let editingDatasetId = null;
 let datasetsById = new Map();
+
+const PRIMARY_QBTIME_DATASET = "QuickBooks Time Timesheets";
+const HIDDEN_QBTIME_SUPPORT_DATASETS = new Set([
+  "QuickBooks Time Customers",
+  "QuickBooks Time Employees",
+  "QuickBooks Time Groups",
+  "QuickBooks Time Job Codes",
+  "QuickBooks Time PTO",
+  "QuickBooks Time Custom Fields",
+]);
+
+function isHiddenQbtimeSupportDataset(dataset) {
+  return HIDDEN_QBTIME_SUPPORT_DATASETS.has(dataset?.name || "");
+}
+
+function visibleDatasets(rows = []) {
+  return rows.filter((dataset) => !isHiddenQbtimeSupportDataset(dataset));
+}
 if (profile) {
   renderShell(profile);
   loadDatasets();
@@ -17,10 +35,11 @@ if (profile) {
 async function loadDatasets() {
   const { data, error } = await supabase.from("datasets").select("*").neq("name", "QuickBooks Time PTO").order("created_at", { ascending: false });
   if (error) return toast(error.message, "error");
-  datasetsById = new Map((data || []).map((dataset) => [dataset.id, dataset]));
+  const visibleRows = visibleDatasets(data || []);
+  datasetsById = new Map(visibleRows.map((dataset) => [dataset.id, dataset]));
   const tbody = $("#datasets-body");
   if (!tbody) return;
-  renderRows(tbody, data, [
+  renderRows(tbody, visibleRows, [
     (r) => `<strong>${escapeHtml(r.name)}</strong><br><span>${escapeHtml(r.description || "")}</span>`,
     (r) => escapeHtml(r.source_type),
     (r) => String(r.record_count || 0),
@@ -105,20 +124,27 @@ async function saveDataset(event) {
 }
 
 async function deleteDataset(id) {
+  const dataset = datasetsById.get(id);
+  if (!dataset) return toast("That dataset is no longer visible. Refreshing the list.", "error");
+  if (dataset.name === PRIMARY_QBTIME_DATASET) {
+    return toast("QuickBooks Time Timesheets is the primary synced dataset and should stay available for dashboards.", "info");
+  }
+  if (!confirm(`Delete ${dataset.name}? This removes its records and permissions.`)) return;
+
   const button = document.querySelector(`[data-action="delete-dataset"][data-dataset-id="${id}"]`);
   setButtonBusy(button, true, "Deleting...");
   try {
-    const { error } = await supabase.from("datasets").delete().eq("id", id);
+    const { data, error } = await supabase.rpc("delete_dataset_admin", { dataset_uuid: id });
     if (error) return toast(error.message, "error");
     if (editingDatasetId === id) cancelEdit();
-    toast("Dataset deleted.", "success");
+    const records = Number(data?.records_deleted || 0).toLocaleString();
+    toast(`Dataset deleted. Removed ${records} record${records === "1" ? "" : "s"}.`, "success");
     loadDatasetOptions();
     loadDatasets();
   } finally {
     setButtonBusy(button, false);
   }
 }
-
 async function uploadData(event) {
   event.preventDefault();
   const button = event.submitter || event.target.querySelector("button");
@@ -198,7 +224,8 @@ async function loadDatasetOptions() {
   const select = $("#upload-dataset");
   if (!select) return;
   const { data } = await supabase.from("datasets").select("id,name").neq("name", "QuickBooks Time PTO").order("name");
-  select.innerHTML = `<option value="">Choose dataset</option>${(data || []).map((d) => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join("")}`;
+  const options = visibleDatasets(data || []);
+  select.innerHTML = `<option value="">Choose dataset</option>${options.map((d) => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join("")}`;
 }
 
 loadDatasetOptions();
