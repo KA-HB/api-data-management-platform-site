@@ -217,10 +217,7 @@ async function loadQbVisuals() {
 
   stopProgress(progress);
   const normalized = normalizeExperienceRollup(data);
-  renderChart("#hours-by-employee", "bar", normalized.hours_by_employee, "employee", "hours", "Hours");
-  renderChart("#hours-by-jobcode", "bar", normalized.hours_by_jobcode, "jobcode", "hours", "Hours");
-  renderChart("#hours-by-service-item", "bar", normalized.hours_by_service_item, "service_item", "hours", "Hours");
-  renderChart("#hours-over-time", "line", normalized.hours_by_day, "date", "hours", "Hours");
+  renderExperienceCharts(normalized, payload);
   renderChart("#records-by-dataset", "bar", normalized.records_by_dataset || [], "name", "records", "Unique Records");
   renderChart("#records-over-time", "line", normalized.records_by_day || [], "date", "records", "Unique Records");
 
@@ -229,11 +226,11 @@ async function loadQbVisuals() {
   setText("#metric-hours", formatNumber(normalized.filtered_hours));
   setText("#metric-employees", formatNumber(dashboardEmployeeMetric(normalized, payload)));
   setText("#metric-services", formatNumber(normalized.filtered_service_items));
-  setText("#qb-filter-summary", `${formatNumber(normalized.filtered_timesheets)} experience records, ${formatNumber(normalized.filtered_hours)} hours${dateRangeLabel(normalized)}`);
-  setText("#data-scope-summary", scopeSummary(normalized));
+  setText("#qb-filter-summary", filterSummaryText(normalized, payload));
+  setText("#data-scope-summary", scopeSummary(normalized, payload));
 
-  renderEmployeeExperience(normalized.employee_experience);
-  renderExperienceDetail(normalized.experience_rows);
+  renderEmployeeExperience(normalized.employee_experience, payload);
+  renderExperienceDetail(normalized.experience_rows, payload);
 }
 
 function clearQbVisuals() {
@@ -1742,16 +1739,51 @@ function renderChart(selector, type, rows, labelKey, valueKey, label) {
 
 function renderExperienceOverview(data) {
   const normalized = normalizeExperienceRollup(data);
-  renderChart("#hours-by-employee", "bar", normalized.hours_by_employee, "employee", "hours", "Hours");
-  renderChart("#hours-by-jobcode", "bar", normalized.hours_by_jobcode, "jobcode", "hours", "Hours");
-  renderChart("#hours-by-service-item", "bar", normalized.hours_by_service_item, "service_item", "hours", "Hours");
-  renderChart("#hours-over-time", "line", normalized.hours_by_day, "date", "hours", "Hours");
+  renderExperienceCharts(normalized);
   renderEmployeeExperience(normalized.employee_experience);
   renderExperienceDetail(normalized.experience_rows);
 }
 
-function renderEmployeeExperience(rows) {
-  setText("#employee-experience-summary", rows.length ? `${formatNumber(rows.length)} matching employees` : "No matching employees");
+function renderExperienceCharts(normalized, payload = {}) {
+  const employeeScoped = isEmployeeScoped(payload, normalized.employee_experience);
+  setChartTitle("#hours-by-employee", employeeScoped ? "Selected Employee Hours" : "Hours by Employee");
+  setChartTitle("#hours-by-jobcode", employeeScoped ? "Selected Employee Hours by Project / Job Code 1" : "Hours by Project / Job Code 1");
+  setChartTitle("#hours-by-service-item", employeeScoped ? "Selected Employee Hours by Service Item" : "Hours by Service Item");
+  setChartTitle("#hours-over-time", employeeScoped ? "Selected Employee Hours Over Time" : "Hours Over Time");
+  renderChart("#hours-by-employee", "bar", normalized.hours_by_employee, "employee", "hours", "Hours");
+  renderChart("#hours-by-jobcode", "bar", normalized.hours_by_jobcode, "jobcode", "hours", "Hours");
+  renderChart("#hours-by-service-item", "bar", normalized.hours_by_service_item, "service_item", "hours", "Hours");
+  renderChart("#hours-over-time", "line", normalized.hours_by_day, "date", "hours", "Hours");
+}
+
+function setChartTitle(canvasSelector, title) {
+  const heading = $(canvasSelector)?.closest(".chart-panel")?.querySelector("h2");
+  if (heading) heading.textContent = title;
+}
+
+function isEmployeeScoped(payload = {}, rows = []) {
+  if (payload.employee_filter) return true;
+  return rows?.length === 1;
+}
+
+function employeeScopeName(payload = {}, rows = []) {
+  const rowName = rows?.length === 1 ? cleanEmployeeLabel(rows[0]?.employee) : null;
+  return rowName || cleanEmployeeLabel(payload.employee_filter) || "selected employee";
+}
+
+function filterSummaryText(data, payload = {}) {
+  const recordLabel = numeric(data.filtered_timesheets) === 1 ? "experience record" : "experience records";
+  const base = `${formatNumber(data.filtered_timesheets)} ${recordLabel}, ${formatNumber(data.filtered_hours)} hours${dateRangeLabel(data)}`;
+  if (!isEmployeeScoped(payload, data.employee_experience)) return base;
+  const projectLabel = numeric(data.filtered_jobcodes) === 1 ? "project/job code" : "project/job codes";
+  const serviceLabel = numeric(data.filtered_service_items) === 1 ? "service item" : "service items";
+  return `${employeeScopeName(payload, data.employee_experience)}: ${base}; ${formatNumber(data.filtered_jobcodes)} ${projectLabel}; ${formatNumber(data.filtered_service_items)} ${serviceLabel}`;
+}
+
+function renderEmployeeExperience(rows, payload = {}) {
+  const employeeScoped = isEmployeeScoped(payload, rows);
+  const name = employeeScoped ? employeeScopeName(payload, rows) : "";
+  setText("#employee-experience-summary", rows.length ? employeeScoped ? `${name} experience summary` : `${formatNumber(rows.length)} matching employee${rows.length === 1 ? "" : "s"}` : "No matching employees");
   renderRows($("#employee-experience-body"), rows, [
     (r) => escapeHtml(r.employee),
     (r) => formatNumber(r.hours),
@@ -1763,8 +1795,10 @@ function renderEmployeeExperience(rows) {
   ]);
 }
 
-function renderExperienceDetail(rows) {
-  setText("#experience-detail-summary", rows.length ? `${formatNumber(rows.length)} employee, job, and service combinations` : "No matching experience rows");
+function renderExperienceDetail(rows, payload = {}) {
+  const employeeScoped = isEmployeeScoped(payload, rows);
+  const name = employeeScoped ? employeeScopeName(payload, rows) : "";
+  setText("#experience-detail-summary", rows.length ? employeeScoped ? `${formatNumber(rows.length)} project and service combination${rows.length === 1 ? "" : "s"} for ${name}` : `${formatNumber(rows.length)} employee, job, and service combination${rows.length === 1 ? "" : "s"}` : "No matching experience rows");
   renderRows($("#experience-detail-body"), rows, [
     (r) => escapeHtml(r.employee),
     (r) => escapeHtml(detailJobcodeLabel(r, 1)),
@@ -1953,7 +1987,7 @@ function debounce(fn, delay) {
   };
 }
 
-function scopeSummary(data) {
+function scopeSummary(data, payload = {}) {
   if (data.is_fast_fallback) {
     return `Showing ${formatNumber(data.unique_records)} records across ${formatNumber(data.dataset_count)} dataset${Number(data.dataset_count) === 1 ? "" : "s"} from dataset metadata. Experience totals will update after the dashboard rollup finishes refreshing.`;
   }
@@ -1967,5 +2001,6 @@ function scopeSummary(data) {
   const refreshText = data.refreshed_at
     ? ` Dashboard rollup refreshed ${new Date(data.refreshed_at).toLocaleString()}.`
     : "";
-  return `${scope}: ${formatNumber(data.unique_records)} unique records from ${formatNumber(data.raw_records)} raw rows across ${formatNumber(data.dataset_count)} dataset${Number(data.dataset_count) === 1 ? "" : "s"}.${duplicateText}${sourceText}${refreshText}`;
+  const employeeText = isEmployeeScoped(payload, data.employee_experience) ? ` Filtered to ${employeeScopeName(payload, data.employee_experience)}.` : "";
+  return `${scope}: ${formatNumber(data.unique_records)} unique records from ${formatNumber(data.raw_records)} raw rows across ${formatNumber(data.dataset_count)} dataset${Number(data.dataset_count) === 1 ? "" : "s"}.${employeeText}${duplicateText}${sourceText}${refreshText}`;
 }
