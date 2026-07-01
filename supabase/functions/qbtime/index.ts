@@ -209,7 +209,25 @@ async function runSync(supabase: ReturnType<typeof serviceClient>, options: Sync
 }
 
 function syncErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error || "Sync failed");
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const parts = [
+      record.message,
+      record.details,
+      record.hint ? `hint: ${record.hint}` : "",
+      record.code ? `code: ${record.code}` : "",
+    ]
+      .map((part) => String(part || "").trim())
+      .filter(Boolean);
+    if (parts.length) return parts.join(" ");
+    try {
+      return JSON.stringify(record);
+    } catch {
+      return "Sync failed with an unreadable error object";
+    }
+  }
+  return String(error || "Sync failed");
 }
 
 function isForbiddenSyncError(message: string) {
@@ -431,7 +449,7 @@ async function upsertDatasetRows(supabase: ReturnType<typeof serviceClient>, dat
   const records = Array.from(recordMap.values());
   for (let i = 0; i < records.length; i += 1000) {
     const { error } = await supabase.from("records").upsert(records.slice(i, i + 1000), { onConflict: "dataset_id,source_hash" });
-    if (error) throw error;
+    if (error) throw new Error(`Records upsert failed for rows ${i + 1}-${Math.min(i + 1000, records.length)} of ${records.length}: ${syncErrorMessage(error)}`);
   }
 }
 
