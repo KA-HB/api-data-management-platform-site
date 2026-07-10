@@ -148,6 +148,7 @@ function renderGeneralDashboard(summary, coverage) {
   renderChart("#records-by-dataset", "bar", coverage?.records_by_dataset || summary?.records_by_dataset || [], "name", coverage ? "records" : "record_count", coverage ? "Unique Records" : "Records");
   renderChart("#records-over-time", "line", coverage?.records_by_day || summary?.records_by_day || [], "date", "records", coverage ? "Unique Records" : "Records");
   renderChart("#activity-over-time", "line", summary?.activity_by_day || [], "date", "events", "Events");
+  renderAnalyticsSummary(normalizeExperienceRollup(coverage || {}));
   renderExperienceOverview(coverage || {});
 }
 
@@ -218,6 +219,7 @@ async function loadQbVisuals() {
   stopProgress(progress);
   const normalized = normalizeExperienceRollup(data);
   renderExperienceCharts(normalized, payload);
+  renderAnalyticsSummary(normalized, payload);
   renderChart("#records-by-dataset", "bar", normalized.records_by_dataset || [], "name", "records", "Unique Records");
   renderChart("#records-over-time", "line", normalized.records_by_day || [], "date", "records", "Unique Records");
 
@@ -241,6 +243,7 @@ function clearQbVisuals() {
   setText("#qb-filter-summary", "No dataset-specific stats loaded");
   setText("#employee-experience-summary", "No matching employees");
   setText("#experience-detail-summary", "No matching experience rows");
+  renderAnalyticsSummary(normalizeExperienceRollup({}));
   renderRows($("#employee-experience-body"), [], [() => ""]);
   renderRows($("#experience-detail-body"), [], [() => ""]);
 }
@@ -1698,10 +1701,11 @@ function renderChart(selector, type, rows, labelKey, valueKey, label) {
   const canvas = $(selector);
   if (!canvas || !window.Chart) return;
   charts.get(selector)?.destroy();
-  const context = canvas.getContext("2d");
-  const dataRows = rows.length ? rows : [{ [labelKey]: "No data", [valueKey]: 0 }];
+  const dataRows = Array.isArray(rows) && rows.length ? rows : [{ [labelKey]: "No data", [valueKey]: 0 }];
   const isBar = type === "bar";
   const palette = chartPalette();
+  prepareChartFrame(canvas, type, dataRows, labelKey);
+  const context = canvas.getContext("2d");
   charts.set(selector, new Chart(context, {
     type,
     data: {
@@ -1720,6 +1724,7 @@ function renderChart(selector, type, rows, labelKey, valueKey, label) {
       indexAxis: isBar ? "y" : "x",
       responsive: true,
       maintainAspectRatio: false,
+      layout: { padding: { top: 4, right: 12, bottom: 4, left: 4 } },
       plugins: {
         legend: { display: false },
         tooltip: {
@@ -1730,13 +1735,134 @@ function renderChart(selector, type, rows, labelKey, valueKey, label) {
         },
       },
       scales: {
-        x: { beginAtZero: isBar, ticks: { maxRotation: 0, autoSkip: true, color: palette.tick, callback: isBar ? numberTick : shortTick }, grid: { display: false } },
-        y: { beginAtZero: !isBar, ticks: { color: palette.tick, callback: isBar ? shortTick : numberTick }, grid: { color: palette.grid } },
+        x: {
+          beginAtZero: isBar,
+          ticks: { maxRotation: 0, autoSkip: !isBar, color: palette.tick, callback: isBar ? numberTick : shortTick },
+          grid: { display: false },
+        },
+        y: {
+          beginAtZero: !isBar,
+          ticks: { color: palette.tick, autoSkip: false, callback: isBar ? barLabelTick : numberTick, font: { size: 12 } },
+          grid: { color: palette.grid },
+        },
       },
     },
   }));
 }
 
+function prepareChartFrame(canvas, type, rows, labelKey) {
+  const panel = canvas.closest(".chart-panel");
+  const scroll = ensureChartScroll(canvas);
+  const frame = canvas.parentElement;
+  const panelWidth = Math.max(320, Math.floor((panel?.clientWidth || scroll.clientWidth || 720) - 36));
+  const labels = (rows || []).map((row) => String(row[labelKey] || ""));
+  const longestLabel = labels.reduce((max, value) => Math.max(max, value.length), 0);
+  const rowCount = Math.max(1, rows?.length || 0);
+  const isBar = type === "bar";
+  const isTall = panel?.classList.contains("tall-chart");
+  const isWide = panel?.classList.contains("wide-chart");
+  const baseHeight = isWide ? 560 : isTall ? 420 : 300;
+  const rowHeight = isWide ? 36 : 32;
+  const height = isBar ? Math.max(baseHeight, Math.min(isWide ? 920 : 760, rowCount * rowHeight + 90)) : baseHeight;
+  const widthFromLabels = panelWidth + Math.max(0, longestLabel - 26) * 11;
+  const widthFromPoints = type === "line" ? Math.max(panelWidth, rowCount * 54) : widthFromLabels;
+  const maxWidth = isWide ? 2200 : 1700;
+  frame.style.height = `${height}px`;
+  frame.style.minWidth = `${Math.min(maxWidth, Math.max(panelWidth, widthFromPoints))}px`;
+}
+
+function ensureChartScroll(canvas) {
+  if (canvas.parentElement?.classList.contains("chart-frame")) return canvas.parentElement.parentElement;
+  const parent = canvas.parentElement;
+  if (!parent) return null;
+  const scroll = document.createElement("div");
+  const frame = document.createElement("div");
+  scroll.className = "chart-scroll";
+  frame.className = "chart-frame";
+  parent.insertBefore(scroll, canvas);
+  scroll.appendChild(frame);
+  frame.appendChild(canvas);
+  return scroll;
+}
+
+function renderAnalyticsSummary(data = {}, payload = {}) {
+  const summary = $("#analytics-summary-text");
+  const cards = $("#analytics-summary-cards");
+  const recommendations = $("#analytics-recommendations");
+  if (!summary && !cards && !recommendations) return;
+
+  const totalHours = numeric(data.filtered_hours ?? firstPositive(sumValues(data.hours_by_day, "hours"), sumValues(data.hours_by_employee, "hours")));
+  const employeeCount = numeric(data.filtered_employees ?? data.employee_experience?.length);
+  const activeEmployees = numeric(data.active_employee_count);
+  const serviceMix = topShare(data.hours_by_service_item || [], "service_item", "hours");
+  const projectMix = topShare(data.hours_by_jobcode || [], "jobcode", "hours");
+  const averageHours = employeeCount ? totalHours / employeeCount : 0;
+  const dateRange = data.date_start || data.date_end ? dateRangeLabel(data).replace(/^ from /, "") : "All dates";
+  const duplicateCount = numeric(data.duplicates_removed);
+  const rawRecords = numeric(data.raw_records ?? data.filtered_timesheets);
+  const uniqueRecords = numeric(data.unique_records ?? data.filtered_timesheets);
+
+  setText("#analytics-summary-text", totalHours
+    ? `${formatNumber(totalHours)} hours across ${formatNumber(employeeCount)} employee${employeeCount === 1 ? "" : "s"}; ${dateRange}.`
+    : "Experience analytics will appear once dashboard rollup data is available.");
+
+  if (cards) {
+    cards.innerHTML = [
+      analyticsCard("Top service mix", serviceMix.label ? `${formatDecimal(serviceMix.percent)}%` : "-", serviceMix.label ? `${serviceMix.label} (${formatNumber(serviceMix.value)} hrs)` : "No service data"),
+      analyticsCard("Top project mix", projectMix.label ? `${formatDecimal(projectMix.percent)}%` : "-", projectMix.label ? `${projectMix.label} (${formatNumber(projectMix.value)} hrs)` : "No project data"),
+      analyticsCard("Avg hours / employee", averageHours ? formatDecimal(averageHours) : "-", employeeCount ? `${formatNumber(employeeCount)} employees with matching hours` : "No employee hours yet"),
+      analyticsCard("Data quality", duplicateCount ? formatNumber(duplicateCount) : "0", `${formatNumber(uniqueRecords)} unique / ${formatNumber(rawRecords)} raw rows`),
+    ].join("");
+  }
+
+  if (recommendations) {
+    const items = [];
+    if (!totalHours) {
+      items.push({ tone: "warn", text: "No hours are available for this view yet. Sync QuickBooks Time or widen the filters before using these charts for decisions." });
+    }
+    if (serviceMix.percent >= 55) {
+      items.push({ tone: "warn", text: `${serviceMix.label} dominates the service mix at ${formatDecimal(serviceMix.percent)}% of hours. Confirm this is expected before staffing from this slice.` });
+    } else if (serviceMix.percent >= 35) {
+      items.push({ tone: "", text: `${serviceMix.label} is the largest service item at ${formatDecimal(serviceMix.percent)}% of hours. Use the service filter to inspect the next layer down.` });
+    }
+    if (projectMix.percent >= 55) {
+      items.push({ tone: "warn", text: `${projectMix.label} accounts for ${formatDecimal(projectMix.percent)}% of project hours. Review whether this is true demand or a coding concentration.` });
+    } else if (projectMix.percent >= 35) {
+      items.push({ tone: "", text: `${projectMix.label} is the leading project at ${formatDecimal(projectMix.percent)}% of hours. Compare employee coverage before reallocating work.` });
+    }
+    if (activeEmployees > employeeCount && employeeCount) {
+      items.push({ tone: "", text: `${formatNumber(activeEmployees - employeeCount)} active employees have no matching hours in this view. Check whether filters are excluding expected coverage.` });
+    }
+    if (duplicateCount > 0) {
+      items.push({ tone: "ok", text: `${formatNumber(duplicateCount)} duplicate source rows were excluded, so the charts are using the cleaned unique-record view.` });
+    }
+    if (!items.length) {
+      items.push({ tone: "ok", text: "No high-concentration or data-quality flags stand out for the current filters." });
+    }
+    recommendations.innerHTML = items.map((item) => `<li class="${escapeHtml(item.tone)}">${escapeHtml(item.text)}</li>`).join("");
+  }
+}
+
+function analyticsCard(label, value, detail) {
+  return `<div><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span><small>${escapeHtml(detail)}</small></div>`;
+}
+
+function topShare(rows, labelKey, valueKey) {
+  const cleanRows = (rows || []).filter((row) => numeric(row[valueKey]) > 0);
+  const total = sumValues(cleanRows, valueKey);
+  const top = cleanRows.reduce((winner, row) => numeric(row[valueKey]) > numeric(winner?.[valueKey]) ? row : winner, null);
+  const value = numeric(top?.[valueKey]);
+  return {
+    label: top ? String(top[labelKey] || "Unassigned") : "",
+    value,
+    total,
+    percent: total ? (value / total) * 100 : 0,
+  };
+}
+
+function formatDecimal(value) {
+  return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 1 });
+}
 function renderExperienceOverview(data) {
   const normalized = normalizeExperienceRollup(data);
   renderExperienceCharts(normalized);
@@ -1956,6 +2082,33 @@ function dateRangeLabel(data) {
 function shortTick(value) {
   const label = this.getLabelForValue ? this.getLabelForValue(value) : String(value);
   return label.length > 28 ? `${label.slice(0, 25)}...` : label;
+}
+
+function barLabelTick(value) {
+  const label = this.getLabelForValue ? this.getLabelForValue(value) : String(value);
+  return wrapChartLabel(label, 26, 3);
+}
+
+function wrapChartLabel(label, maxLength = 26, maxLines = 3) {
+  const cleanLabel = String(label || "").replace(/\s+/g, " ").trim();
+  if (cleanLabel.length <= maxLength) return cleanLabel;
+  const words = cleanLabel.replace(/([/:_-])/g, "$1 ").split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = "";
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length <= maxLength) {
+      line = next;
+      continue;
+    }
+    if (line) lines.push(line);
+    line = word.length > maxLength ? `${word.slice(0, maxLength - 3)}...` : word;
+    if (lines.length === maxLines - 1) break;
+  }
+  if (line && lines.length < maxLines) lines.push(line);
+  const used = lines.join(" ").replace(/\.\.\.$/, "").length;
+  if (used < cleanLabel.length && lines.length) lines[lines.length - 1] = `${lines[lines.length - 1].replace(/\.\.\.$/, "").slice(0, maxLength - 3)}...`;
+  return lines;
 }
 
 function numberTick(value) {
