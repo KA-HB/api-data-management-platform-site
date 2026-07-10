@@ -1173,8 +1173,10 @@ async function syncQuickBooksTime() {
     }
     const stats = payload.data?.stats || {};
     const errors = payload.data?.errors || [];
-    const message = `Sync finished. Timesheets: ${formatNumber(stats.Timesheets)}; Employees: ${formatNumber(stats.Employees)}; Job Codes: ${formatNumber(stats["Job Codes"])}.${errors.length ? ` ${errors.length} warning${errors.length === 1 ? "" : "s"} logged.` : ""}`;
-    stopProgress(progress, message, errors.length ? "info" : "success");
+    const warnings = payload.data?.warnings || stats.warnings || [];
+    const issueCount = errors.length + warnings.length;
+    const message = `Sync finished. Timesheets: ${formatNumber(stats.Timesheets)}; Employees: ${formatNumber(stats.Employees)}; Job Codes: ${formatNumber(stats["Job Codes"])}.${issueCount ? ` ${issueCount} warning${issueCount === 1 ? "" : "s"} logged.` : ""}`;
+    stopProgress(progress, message, issueCount ? "info" : "success");
     await loadDatasets();
     await loadDashboard();
   } catch (error) {

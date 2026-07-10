@@ -114,7 +114,7 @@ async function handleRequest(req: Request) {
 
   if (req.method === "POST" && action === "sync") {
     const result = await runSync(service, { forceFullTimesheets });
-    await userSupabase.rpc("log_activity", { action_name: "qbtime.manual_sync", details_json: result });
+    await logUserActivity(userSupabase, "qbtime.manual_sync", result);
     return jsonResponse({ data: result });
   }
 
@@ -153,11 +153,13 @@ async function runSync(supabase: ReturnType<typeof serviceClient>, options: Sync
     message: "Sync timed out before completion",
     finished_at: started,
   }).eq("status", "running").is("finished_at", null);
-  const { data: settings } = await supabase.from("qbtime_settings").select("*").order("created_at", { ascending: false }).limit(1).single();
-  const { data: log } = await supabase.from("sync_logs").insert({ status: "running", started_at: started }).select("id").single();
+  const { data: settings, error: settingsError } = await supabase.from("qbtime_settings").select("*").order("created_at", { ascending: false }).limit(1).single();
+  if (settingsError || !settings) throw new Error(settingsError?.message || "QuickBooks Time settings are not configured");
+  const { data: log, error: logError } = await supabase.from("sync_logs").insert({ status: "running", started_at: started }).select("id").single();
   const stats: Record<string, number> = {};
   const errors: Array<{ dataset: string; message: string }> = [];
   const warnings: Array<{ dataset: string; message: string }> = [];
+  if (logError || !log?.id) warnings.push({ dataset: "Sync Log", message: logError?.message || "Could not create a sync log entry" });
 
   try {
     let accessToken = settings.access_token;
@@ -193,18 +195,34 @@ async function runSync(supabase: ReturnType<typeof serviceClient>, options: Sync
     if (refreshResult.error) {
       warnings.push({ dataset: "Dashboard Refresh", message: refreshResult.error.message });
     }
-    await supabase.from("qbtime_settings").update({ last_sync: new Date().toISOString() }).eq("id", settings.id);
+    const lastSyncResult = await supabase.from("qbtime_settings").update({ last_sync: new Date().toISOString() }).eq("id", settings.id);
+    if (lastSyncResult.error) warnings.push({ dataset: "Settings", message: lastSyncResult.error.message });
     const status = errors.length ? "partial" : "success";
-    await supabase.from("sync_logs").update({
+    await updateSyncLog(supabase, log?.id, {
       status,
       message: errors.map((error) => `${error.dataset}: ${error.message}`).join("; ") || warnings.map((warning) => `${warning.dataset}: ${warning.message}`).join("; ") || null,
       stats: { ...stats, mode: options.forceFullTimesheets ? "full" : "incremental", errors, warnings },
       finished_at: new Date().toISOString(),
-    }).eq("id", log.id);
+    });
     return { status, stats: { ...stats, mode: options.forceFullTimesheets ? "full" : "incremental", errors, warnings }, errors, warnings };
   } catch (error) {
-    await supabase.from("sync_logs").update({ status: "failed", message: error.message, stats, finished_at: new Date().toISOString() }).eq("id", log.id);
+    await updateSyncLog(supabase, log?.id, { status: "failed", message: syncErrorMessage(error), stats, finished_at: new Date().toISOString() });
     throw error;
+  }
+}
+
+async function updateSyncLog(supabase: ReturnType<typeof serviceClient>, logId: string | undefined, patch: Record<string, unknown>) {
+  if (!logId) return;
+  const { error } = await supabase.from("sync_logs").update(patch).eq("id", logId);
+  if (error) console.warn("QuickBooks Time sync log update failed", syncErrorMessage(error));
+}
+
+async function logUserActivity(userSupabase: ReturnType<typeof userClient>, actionName: string, details: unknown) {
+  try {
+    const { error } = await userSupabase.rpc("log_activity", { action_name: actionName, details_json: details });
+    if (error) console.warn("QuickBooks Time activity log failed", syncErrorMessage(error));
+  } catch (error) {
+    console.warn("QuickBooks Time activity log failed", syncErrorMessage(error));
   }
 }
 
