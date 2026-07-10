@@ -1,5 +1,5 @@
 import { supabase } from "./supabaseClient.js";
-import { currentProfile, dashboardPath } from "./auth.js";
+import { clearAuthTimeoutMessage, currentProfile, dashboardPath } from "./auth.js";
 import { initTheme } from "./ui.js";
 
 const message = document.querySelector("#auth-callback-message");
@@ -36,6 +36,7 @@ async function completeSignIn() {
     return;
   }
 
+  clearAuthTimeoutMessage();
   location.replace(dashboardPath(profile.role));
 }
 

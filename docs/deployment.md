@@ -31,3 +31,9 @@ http://localhost:8080
 ```
 
 Static module imports require an HTTP server; opening the files directly may fail in some browsers.
+
+## SSO Session Timeout
+
+The frontend enforces an 8-hour absolute Microsoft SSO session limit and a 60-minute idle timeout. When either limit is reached, the app signs out of Supabase, clears its local session marker, returns the user to the login page, and uses `prompt=login` on the next Microsoft OAuth request.
+
+For stronger enforcement, also configure Supabase Auth JWT/session lifetime and Microsoft Entra Conditional Access sign-in frequency. The frontend timeout prevents the app from treating a refreshed browser session as permanent, but Microsoft controls whether the user must enter a password, complete MFA, or can satisfy SSO from an existing tenant session.

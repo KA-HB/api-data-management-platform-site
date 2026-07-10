@@ -1,5 +1,5 @@
 import { supabase } from "./supabaseClient.js";
-import { redirectFromLogin } from "./auth.js";
+import { AUTH_TIMEOUT_REASON_KEY, redirectFromLogin } from "./auth.js";
 import { $, initTheme, setButtonBusy, toast } from "./ui.js";
 
 const azureLogin = $("#azure-login");
@@ -7,6 +7,7 @@ const authMessage = $("#auth-message");
 
 initTheme();
 await redirectFromLogin();
+showTimeoutMessage();
 
 function showAuthMessage(message) {
   if (authMessage) {
@@ -15,6 +16,24 @@ function showAuthMessage(message) {
   }
 }
 
+
+function showTimeoutMessage() {
+  let reason = "";
+  try {
+    reason = localStorage.getItem(AUTH_TIMEOUT_REASON_KEY) || "";
+  } catch {
+    reason = "";
+  }
+  if (reason) showAuthMessage(reason);
+}
+
+function microsoftPromptMode() {
+  try {
+    return localStorage.getItem(AUTH_TIMEOUT_REASON_KEY) ? "login" : "select_account";
+  } catch {
+    return "login";
+  }
+}
 azureLogin?.addEventListener("click", async () => {
   setButtonBusy(azureLogin, true, "Redirecting...");
   showAuthMessage("Redirecting to Microsoft...");
@@ -24,7 +43,7 @@ azureLogin?.addEventListener("click", async () => {
     options: {
       scopes: "email",
       redirectTo,
-      queryParams: { prompt: "select_account" },
+      queryParams: { prompt: microsoftPromptMode() },
     },
   });
 
