@@ -1171,6 +1171,13 @@ async function syncQuickBooksTime() {
       stopProgress(progress, payload.error || `Sync failed with status ${response.status}`, "error");
       return;
     }
+    if (payload.data?.queued || payload.data?.status === "running") {
+      stopProgress(progress, "Sync started in the background. Recent Syncs will update when it finishes.", "info");
+      window.setTimeout(() => {
+        loadDashboard().catch((error) => console.error("Dashboard refresh after sync start failed", error));
+      }, 5000);
+      return;
+    }
     const stats = payload.data?.stats || {};
     const errors = payload.data?.errors || [];
     const warnings = payload.data?.warnings || stats.warnings || [];

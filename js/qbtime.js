@@ -72,11 +72,20 @@ async function syncNow() {
   try {
     const response = await fetch(`${FUNCTIONS_BASE_URL}/qbtime?action=sync`, { method: "POST", headers: await authHeaders() });
     const payload = await readPayload(response);
+    if (!response.ok) {
+      stopProgress(progress, payload.error || `Sync failed with status ${response.status}`, "error");
+      return;
+    }
+    if (payload.data?.queued || payload.data?.status === "running") {
+      stopProgress(progress, "Sync started in the background. Check Last sync again in a minute.", "info");
+      window.setTimeout(loadSettings, 5000);
+      return;
+    }
     const stats = payload.data?.stats ? ` ${JSON.stringify(payload.data.stats)}` : "";
     const errors = payload.data?.errors || [];
     const warnings = payload.data?.warnings || payload.data?.stats?.warnings || [];
     const issueText = [...errors, ...warnings].length ? ` Warnings: ${[...errors, ...warnings].map((e) => `${e.dataset}: ${e.message}`).join("; ")}` : "";
-    stopProgress(progress, response.ok ? `Sync finished.${stats}${issueText}` : payload.error, response.ok && !issueText ? "success" : "info");
+    stopProgress(progress, `Sync finished.${stats}${issueText}`, issueText ? "info" : "success");
     loadSettings();
   } catch (error) {
     stopProgress(progress, error.message, "error");

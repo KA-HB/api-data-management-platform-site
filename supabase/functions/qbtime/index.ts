@@ -113,7 +113,33 @@ async function handleRequest(req: Request) {
   }
 
   if (req.method === "POST" && action === "sync") {
-    const result = await runSync(service, { forceFullTimesheets });
+    const syncOptions = { forceFullTimesheets };
+    const runningSync = await findRecentRunningSync(service);
+    if (runningSync) {
+      const queuedResult = {
+        status: "running",
+        queued: true,
+        stats: { mode: forceFullTimesheets ? "full" : "incremental", started_at: runningSync.started_at },
+        errors: [],
+        warnings: [{ dataset: "Sync", message: "A QuickBooks Time sync is already running." }],
+      };
+      await logUserActivity(userSupabase, "qbtime.manual_sync_already_running", queuedResult);
+      return jsonResponse({ data: queuedResult }, 202);
+    }
+
+    if (queueBackgroundSync(service, syncOptions)) {
+      const queuedResult = {
+        status: "running",
+        queued: true,
+        stats: { mode: forceFullTimesheets ? "full" : "incremental" },
+        errors: [],
+        warnings: [{ dataset: "Sync", message: "QuickBooks Time sync is running in the background." }],
+      };
+      await logUserActivity(userSupabase, "qbtime.manual_sync_started", queuedResult);
+      return jsonResponse({ data: queuedResult }, 202);
+    }
+
+    const result = await runSync(service, syncOptions);
     await logUserActivity(userSupabase, "qbtime.manual_sync", result);
     return jsonResponse({ data: result });
   }
@@ -146,6 +172,32 @@ function fullSyncRequested(url: URL) {
 
 type SyncOptions = { forceFullTimesheets?: boolean };
 
+async function findRecentRunningSync(supabase: ReturnType<typeof serviceClient>) {
+  const recentThreshold = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from("sync_logs")
+    .select("id,started_at")
+    .eq("status", "running")
+    .is("finished_at", null)
+    .gte("started_at", recentThreshold)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.warn("QuickBooks Time running-sync check failed", syncErrorMessage(error));
+    return null;
+  }
+  return data;
+}
+
+function queueBackgroundSync(supabase: ReturnType<typeof serviceClient>, options: SyncOptions) {
+  const runtime = (globalThis as unknown as { EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void } }).EdgeRuntime;
+  if (typeof runtime?.waitUntil !== "function") return false;
+  runtime.waitUntil(runSync(supabase, options).catch((error) => {
+    console.error("QuickBooks Time background sync failed", syncErrorMessage(error));
+  }));
+  return true;
+}
 async function runSync(supabase: ReturnType<typeof serviceClient>, options: SyncOptions = {}) {
   const started = new Date().toISOString();
   await supabase.from("sync_logs").update({
