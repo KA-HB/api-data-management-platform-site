@@ -4,6 +4,9 @@ import { supabase } from "./supabaseClient.js";
 import { $, setButtonBusy, startProgress, stopProgress, toast } from "./ui.js";
 
 const profile = await requireAuth("admin");
+const SYNC_STATUS_POLL_MS = 5000;
+const SYNC_STATUS_MAX_POLLS = 24;
+
 if (profile) {
   renderShell(profile);
   loadSettings();
@@ -22,20 +25,20 @@ async function loadSettings() {
   const payload = await readPayload(response);
   if (!response.ok) {
     renderConnectionStatus(payload.error || `Could not load QuickBooks settings (${response.status}).`, "error");
-    return;
+    return null;
   }
   if (payload.data) {
     $("#client-id").value = payload.data.client_id || "";
     $("#redirect-uri").value = payload.data.redirect_uri || "";
     $("#last-sync").textContent = payload.data.last_sync ? new Date(payload.data.last_sync).toLocaleString() : "Never";
   }
-  await loadConnectionStatus(Boolean(payload.data?.client_id));
+  return loadConnectionStatus(Boolean(payload.data?.client_id));
 }
 
 async function loadConnectionStatus(hasSettings) {
   if (!hasSettings) {
     renderConnectionStatus("QuickBooks Time is not configured.", "error");
-    return;
+    return null;
   }
 
   const { data, error } = await supabase
@@ -48,21 +51,22 @@ async function loadConnectionStatus(hasSettings) {
 
   if (error || !data) {
     renderConnectionStatus("QuickBooks Time settings are configured.");
-    return;
+    return null;
   }
   if (requiresQuickBooksReconnect(data.message)) {
     renderConnectionStatus(friendlySyncError(data.message), "error");
-    return;
+    return data.status;
   }
   if (data.status === "success") {
     renderConnectionStatus(`Connected. Last successful sync ${new Date(data.finished_at).toLocaleString()}.`, "success");
-    return;
+    return data.status;
   }
   if (data.status === "running") {
     renderConnectionStatus("QuickBooks Time sync is currently running.");
-    return;
+    return data.status;
   }
   renderConnectionStatus(`Connected, but the latest sync failed: ${friendlySyncError(data.message)}`, "error");
+  return data.status;
 }
 
 function renderConnectionStatus(message, type = "info") {
@@ -132,8 +136,9 @@ async function syncNow() {
       return;
     }
     if (payload.data?.queued || payload.data?.status === "running") {
+      window.clearDashboardCache?.();
       stopProgress(progress, "Sync started in the background. Check Last sync again in a minute.", "info");
-      window.setTimeout(loadSettings, 5000);
+      window.setTimeout(() => pollSyncCompletion(), SYNC_STATUS_POLL_MS);
       return;
     }
     const stats = payload.data?.stats ? ` ${JSON.stringify(payload.data.stats)}` : "";
@@ -149,6 +154,15 @@ async function syncNow() {
   }
 }
 
+async function pollSyncCompletion(attempt = 0) {
+  const status = await loadSettings();
+  if (status === "running" && attempt < SYNC_STATUS_MAX_POLLS - 1) {
+    window.setTimeout(() => pollSyncCompletion(attempt + 1), SYNC_STATUS_POLL_MS);
+    return;
+  }
+  if (status && status !== "running") window.clearDashboardCache?.();
+}
+
 async function readPayload(response) {
   const text = await response.text();
   try {
@@ -157,3 +171,4 @@ async function readPayload(response) {
     return { error: text || `Request failed with status ${response.status}` };
   }
 }
+

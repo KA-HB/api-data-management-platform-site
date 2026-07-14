@@ -1,8 +1,8 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm";
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./config.js";
 
-const DASHBOARD_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const DASHBOARD_CACHE_DB = "dashboard-cache-db-v2";
+const DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
+const DASHBOARD_CACHE_DB = "dashboard-cache-db-v3";
 const DASHBOARD_CACHE_STORE = "responses";
 const CACHEABLE_RPC_NAMES = new Set([
   "dashboard_summary",
@@ -110,7 +110,7 @@ function isCacheableDashboardRequest(request) {
 
 async function dashboardResponseCacheKey(request) {
   return [
-    "dashboard-response-cache-v2",
+    "dashboard-response-cache-v3",
     todayKey(),
     authBucket(request.headers),
     request.method,
@@ -233,7 +233,7 @@ async function maybeClearDashboardCache(request, response) {
 
 function dashboardMemoryCacheKey(fnName, args = {}) {
   return [
-    "dashboard-cache-v1",
+    "dashboard-cache-v2",
     todayKey(),
     SUPABASE_URL,
     currentCachedUserId(),
@@ -294,7 +294,7 @@ function clearOldDashboardCache() {
     const keys = [];
     for (let index = 0; index < localStorage.length; index += 1) {
       const key = localStorage.key(index);
-      if (key?.startsWith("dashboard-cache-v1:")) keys.push(key);
+      if (key?.startsWith("dashboard-cache-v1:") || key?.startsWith("dashboard-cache-v2:")) keys.push(key);
     }
     keys.forEach((key) => localStorage.removeItem(key));
   } catch {
@@ -313,3 +313,4 @@ async function digest(value) {
   const buffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(buffer)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
+
