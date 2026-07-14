@@ -1168,7 +1168,7 @@ async function syncQuickBooksTime() {
     const response = await fetch(`${FUNCTIONS_BASE_URL}/qbtime?action=sync`, { method: "POST", headers });
     const payload = await readPayload(response);
     if (!response.ok) {
-      stopProgress(progress, payload.error || `Sync failed with status ${response.status}`, "error");
+      stopProgress(progress, friendlySyncError(payload.error || `Sync failed with status ${response.status}`), "error");
       return;
     }
     if (payload.data?.queued || payload.data?.status === "running") {
@@ -1190,7 +1190,7 @@ async function syncQuickBooksTime() {
     console.error("QuickBooks Time sync request failed", error);
     const message = /fetch/i.test(error.message || "")
       ? "Could not reach the QuickBooks Time sync function. Refresh, sign in again, then retry. If it continues, the Edge Function may need redeployment."
-      : error.message;
+      : friendlySyncError(error.message);
     stopProgress(progress, message, "error");
   } finally {
     setButtonBusy(button, false);
@@ -1204,6 +1204,13 @@ async function authHeaders() {
   return { Authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" };
 }
 
+function friendlySyncError(message) {
+  const text = String(message || "");
+  if (/refresh[_ ]token.*invalid|token refresh failed.*invalid|invalid.*refresh[_ ]token/i.test(text)) {
+    return "QuickBooks Time authorization expired. Open QuickBooks Time, select Connect / Reconnect QuickBooks Time, complete authorization, then retry sync.";
+  }
+  return text || "QuickBooks Time sync failed.";
+}
 async function readPayload(response) {
   const text = await response.text();
   try {

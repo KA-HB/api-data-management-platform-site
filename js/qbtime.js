@@ -20,13 +20,68 @@ async function authHeaders() {
 async function loadSettings() {
   const response = await fetch(`${FUNCTIONS_BASE_URL}/qbtime`, { headers: await authHeaders() });
   const payload = await readPayload(response);
+  if (!response.ok) {
+    renderConnectionStatus(payload.error || `Could not load QuickBooks settings (${response.status}).`, "error");
+    return;
+  }
   if (payload.data) {
     $("#client-id").value = payload.data.client_id || "";
     $("#redirect-uri").value = payload.data.redirect_uri || "";
     $("#last-sync").textContent = payload.data.last_sync ? new Date(payload.data.last_sync).toLocaleString() : "Never";
   }
+  await loadConnectionStatus(Boolean(payload.data?.client_id));
 }
 
+async function loadConnectionStatus(hasSettings) {
+  if (!hasSettings) {
+    renderConnectionStatus("QuickBooks Time is not configured.", "error");
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("sync_logs")
+    .select("status,message,finished_at")
+    .eq("provider", "quickbooks_time")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !data) {
+    renderConnectionStatus("QuickBooks Time settings are configured.");
+    return;
+  }
+  if (requiresQuickBooksReconnect(data.message)) {
+    renderConnectionStatus(friendlySyncError(data.message), "error");
+    return;
+  }
+  if (data.status === "success") {
+    renderConnectionStatus(`Connected. Last successful sync ${new Date(data.finished_at).toLocaleString()}.`, "success");
+    return;
+  }
+  if (data.status === "running") {
+    renderConnectionStatus("QuickBooks Time sync is currently running.");
+    return;
+  }
+  renderConnectionStatus(`Connected, but the latest sync failed: ${friendlySyncError(data.message)}`, "error");
+}
+
+function renderConnectionStatus(message, type = "info") {
+  const status = $("#qb-connection-status");
+  if (!status) return;
+  status.className = `notice ${type}`;
+  status.textContent = message;
+}
+
+function requiresQuickBooksReconnect(message) {
+  return /refresh[_ ]token.*invalid|token refresh failed.*invalid|invalid.*refresh[_ ]token/i.test(String(message || ""));
+}
+
+function friendlySyncError(message) {
+  if (requiresQuickBooksReconnect(message)) {
+    return "QuickBooks Time authorization expired. Select Connect / Reconnect QuickBooks Time, complete authorization, then run sync again.";
+  }
+  return message || "QuickBooks Time sync failed.";
+}
 async function saveSettings(event) {
   event.preventDefault();
   const button = event.submitter || event.target.querySelector("button");
@@ -73,7 +128,7 @@ async function syncNow() {
     const response = await fetch(`${FUNCTIONS_BASE_URL}/qbtime?action=sync`, { method: "POST", headers: await authHeaders() });
     const payload = await readPayload(response);
     if (!response.ok) {
-      stopProgress(progress, payload.error || `Sync failed with status ${response.status}`, "error");
+      stopProgress(progress, friendlySyncError(payload.error || `Sync failed with status ${response.status}`), "error");
       return;
     }
     if (payload.data?.queued || payload.data?.status === "running") {
@@ -88,7 +143,7 @@ async function syncNow() {
     stopProgress(progress, `Sync finished.${stats}${issueText}`, issueText ? "info" : "success");
     loadSettings();
   } catch (error) {
-    stopProgress(progress, error.message, "error");
+    stopProgress(progress, friendlySyncError(error.message), "error");
   } finally {
     setButtonBusy(button, false);
   }
