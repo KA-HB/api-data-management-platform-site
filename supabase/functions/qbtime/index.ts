@@ -2,6 +2,10 @@ import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { serviceClient, userClient } from "../_shared/supabase.ts";
 
 type SyncResource = { endpoint: string; dataset: string; useDateRange?: boolean; optional?: boolean };
+type DatasetRecord = { dataset_id: string; json_data: unknown; source_hash: string };
+
+const RECORD_UPSERT_BATCH_SIZE = 100;
+const MIN_RECORD_UPSERT_BATCH_SIZE = 25;
 
 const resources: SyncResource[] = [
   { endpoint: "users", dataset: "Employees" },
@@ -519,7 +523,7 @@ async function fetchPageRows(url: URL, accessToken: string, resource: string) {
 
 async function upsertDatasetRows(supabase: ReturnType<typeof serviceClient>, datasetId: string, rows: unknown[]) {
   if (!rows.length) return;
-  const recordMap = new Map<string, { dataset_id: string; json_data: unknown; source_hash: string }>();
+  const recordMap = new Map<string, DatasetRecord>();
   for (const row of rows) {
     const sourceHash = await sourceHashForRow(row);
     recordMap.set(sourceHash, {
@@ -529,10 +533,29 @@ async function upsertDatasetRows(supabase: ReturnType<typeof serviceClient>, dat
     });
   }
   const records = Array.from(recordMap.values());
-  for (let i = 0; i < records.length; i += 1000) {
-    const { error } = await supabase.from("records").upsert(records.slice(i, i + 1000), { onConflict: "dataset_id,source_hash" });
-    if (error) throw new Error(`Records upsert failed for rows ${i + 1}-${Math.min(i + 1000, records.length)} of ${records.length}: ${syncErrorMessage(error)}`);
+  for (let i = 0; i < records.length; i += RECORD_UPSERT_BATCH_SIZE) {
+    await upsertRecordBatch(supabase, records.slice(i, i + RECORD_UPSERT_BATCH_SIZE), i, records.length);
   }
+}
+
+async function upsertRecordBatch(
+  supabase: ReturnType<typeof serviceClient>,
+  records: DatasetRecord[],
+  startIndex: number,
+  totalRecords: number,
+) {
+  const { error } = await supabase.from("records").upsert(records, { onConflict: "dataset_id,source_hash" });
+  if (!error) return;
+
+  const message = syncErrorMessage(error);
+  if (/statement timeout|57014/i.test(message) && records.length > MIN_RECORD_UPSERT_BATCH_SIZE) {
+    const midpoint = Math.ceil(records.length / 2);
+    await upsertRecordBatch(supabase, records.slice(0, midpoint), startIndex, totalRecords);
+    await upsertRecordBatch(supabase, records.slice(midpoint), startIndex + midpoint, totalRecords);
+    return;
+  }
+
+  throw new Error(`Records upsert failed for rows ${startIndex + 1}-${startIndex + records.length} of ${totalRecords}: ${message}`);
 }
 
 async function sourceHashForRow(row: unknown) {
@@ -587,4 +610,5 @@ async function responseError(response: Response, fallback: string) {
   const clean = String(message || "").replace(/\s+/g, " ").slice(0, 240);
   return `${fallback}: ${response.status}${clean ? ` - ${clean}` : ""}`;
 }
+
 
