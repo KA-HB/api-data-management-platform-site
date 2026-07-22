@@ -303,9 +303,9 @@ function clearOldDashboardCache() {
 }
 
 function installDashboardCacheInvalidation() {
-  window.clearDashboardCache = () => {
+  window.clearDashboardCache = async () => {
     clearOldDashboardCache();
-    clearDashboardResponseCache();
+    await clearDashboardResponseCache();
   };
 }
 
