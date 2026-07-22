@@ -1,7 +1,7 @@
 import { requireAuth, renderShell } from "./auth.js";
 import { FUNCTIONS_BASE_URL, SUPABASE_ANON_KEY } from "./config.js";
 import { supabase } from "./supabaseClient.js";
-import { $, escapeHtml, renderRows, setButtonBusy, setText, startProgress, stopProgress, toast } from "./ui.js";
+import { $, escapeHtml, renderRows, setButtonBusy, setText, startProgress, stopProgress, toast, updateProgress } from "./ui.js";
 
 const profile = await requireAuth();
 const charts = new Map();
@@ -15,6 +15,11 @@ const FILTER_OPTION_SCAN_LIMIT = 100000;
 const FILTER_OPTION_CACHE_TTL_MS = 10 * 60 * 1000;
 const EXCLUDED_ADMIN_JOBCODE_PATTERN = /(^|[\s\-_:/])(?:pto|sick|holiday|overhead)(?=$|[\s\-_:/])/i;
 const AUTOMATIC_RAW_ROLLUP_FALLBACK = readBooleanFlag("data-platform-raw-rollup-fallback");
+const SYNC_POLL_INTERVAL_MS = 3000;
+const SYNC_COMPLETION_TIMEOUT_MS = 4 * 60 * 1000;
+const DASHBOARD_FRESHNESS_INTERVAL_MS = 30 * 1000;
+let syncStatusPolling = false;
+let dashboardFreshnessCheckRunning = false;
 
 function readBooleanFlag(key) {
   try {
@@ -38,6 +43,7 @@ if (profile) {
   renderShell(profile);
   await loadDatasets();
   await loadDashboard();
+  startDashboardFreshnessWatcher();
   $("#project-experience-lookup")?.addEventListener("submit", searchProjectExperience);
   $("#clear-project-experience")?.addEventListener("click", clearProjectExperienceLookup);
   $("#dashboard-qb-sync")?.addEventListener("click", syncQuickBooksTime);
@@ -1172,10 +1178,12 @@ async function syncQuickBooksTime() {
       return;
     }
     if (payload.data?.queued || payload.data?.status === "running") {
-      stopProgress(progress, "Sync started in the background. Recent Syncs will update when it finishes.", "info");
-      window.setTimeout(() => {
-        loadDashboard().catch((error) => console.error("Dashboard refresh after sync start failed", error));
-      }, 5000);
+      const since = payload.data?.stats?.started_at || payload.data?.stats?.queued_at || new Date(Date.now() - 5000).toISOString();
+      updateProgress(progress, "Sync is running. This dashboard will refresh automatically when the new data is ready.");
+      syncStatusPolling = true;
+      const completed = await waitForSyncCompletion(since, progress);
+      await refreshDashboardAfterSync();
+      stopProgress(progress, syncCompletionMessage(completed), completed.status === "success" ? "success" : completed.status === "failed" ? "error" : "info");
       return;
     }
     const stats = payload.data?.stats || {};
@@ -1193,8 +1201,76 @@ async function syncQuickBooksTime() {
       : friendlySyncError(error.message);
     stopProgress(progress, message, "error");
   } finally {
+    syncStatusPolling = false;
     setButtonBusy(button, false);
   }
+}
+
+async function waitForSyncCompletion(since, progress) {
+  const deadline = Date.now() + SYNC_COMPLETION_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await delay(SYNC_POLL_INTERVAL_MS);
+    const status = await fetchSyncStatus(since);
+    if (!status || status.status === "pending" || status.status === "running") {
+      updateProgress(progress, "Sync is still running. New dashboard data will appear automatically when it finishes.");
+      continue;
+    }
+    return status;
+  }
+  throw new Error("The sync is taking longer than expected. It is still running in the background; this dashboard will check again automatically.");
+}
+
+async function fetchSyncStatus(since = null) {
+  const headers = await authHeaders();
+  const query = since ? `&since=${encodeURIComponent(since)}` : "";
+  const response = await fetch(`${FUNCTIONS_BASE_URL}/qbtime?action=sync-status${query}`, {
+    method: "GET",
+    headers,
+    cache: "no-store",
+  });
+  const payload = await readPayload(response);
+  if (!response.ok) throw new Error(payload.error || `Sync status failed with status ${response.status}`);
+  return payload.data || null;
+}
+
+async function refreshDashboardAfterSync() {
+  await window.clearDashboardCache?.();
+  await loadDatasets();
+  await loadDashboard();
+}
+
+function syncCompletionMessage(result = {}) {
+  const stats = result.stats || {};
+  const warnings = stats.warnings || [];
+  const errors = stats.errors || [];
+  const issueCount = warnings.length + errors.length;
+  if (result.status === "failed") return `Sync failed: ${result.message || "Unknown sync error"}`;
+  const label = result.status === "partial" ? "Sync completed with errors" : "Sync finished";
+  return `${label}. Timesheets: ${formatNumber(stats.Timesheets)}; Employees: ${formatNumber(stats.Employees)}; Job Codes: ${formatNumber(stats["Job Codes"])}.${issueCount ? ` ${issueCount} warning${issueCount === 1 ? "" : "s"} logged.` : ""}`;
+}
+
+function startDashboardFreshnessWatcher() {
+  window.setInterval(() => {
+    checkForDashboardUpdate().catch((error) => console.warn("Dashboard freshness check failed", error));
+  }, DASHBOARD_FRESHNESS_INTERVAL_MS);
+}
+
+async function checkForDashboardUpdate() {
+  if (document.hidden || syncStatusPolling || dashboardFreshnessCheckRunning) return;
+  dashboardFreshnessCheckRunning = true;
+  try {
+    const status = await fetchSyncStatus();
+    if (!status?.finished_at || !lastGeneralCoverage?.refreshed_at) return;
+    if (new Date(status.finished_at).getTime() > new Date(lastGeneralCoverage.refreshed_at).getTime()) {
+      await refreshDashboardAfterSync();
+    }
+  } finally {
+    dashboardFreshnessCheckRunning = false;
+  }
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 async function authHeaders() {
@@ -2173,3 +2249,4 @@ function scopeSummary(data, payload = {}) {
   const employeeText = isEmployeeScoped(payload, data.employee_experience) ? ` Filtered to ${employeeScopeName(payload, data.employee_experience)}.` : "";
   return `${scope}: ${formatNumber(data.unique_records)} unique records from ${formatNumber(data.raw_records)} raw rows across ${formatNumber(data.dataset_count)} dataset${Number(data.dataset_count) === 1 ? "" : "s"}.${employeeText}${duplicateText}${sourceText}${refreshText}`;
 }
+
