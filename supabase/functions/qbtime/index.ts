@@ -63,11 +63,25 @@ async function handleRequest(req: Request) {
 
   const { data: profile } = await userSupabase.from("profiles").select("role,active").eq("id", auth.user.id).single();
   if (!profile?.active) return jsonResponse({ error: "Active user profile required" }, 403);
+  const service = serviceClient();
+
+  if (req.method === "GET" && action === "sync-status") {
+    let query = service
+      .from("sync_logs")
+      .select("id,provider,status,message,stats,started_at,finished_at")
+      .eq("provider", "quickbooks_time")
+      .order("started_at", { ascending: false })
+      .limit(1);
+    const since = validSyncSince(url.searchParams.get("since"));
+    if (since) query = query.gte("started_at", since);
+    const { data, error } = await query.maybeSingle();
+    if (error) return jsonResponse({ error: error.message }, 400);
+    return jsonResponse({ data: data || { status: "pending", started_at: null, finished_at: null } });
+  }
+
   const isAdmin = profile.role === "admin";
   const isManualSync = req.method === "POST" && action === "sync";
   if (!isAdmin && !isManualSync) return jsonResponse({ error: "Admin role required" }, 403);
-
-  const service = serviceClient();
 
   if (req.method === "GET" && action === "authorize-url") {
     const { data: settings } = await service.from("qbtime_settings").select("*").order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -131,11 +145,12 @@ async function handleRequest(req: Request) {
       return jsonResponse({ data: queuedResult }, 202);
     }
 
+    const queuedAt = new Date().toISOString();
     if (queueBackgroundSync(service, syncOptions)) {
       const queuedResult = {
         status: "running",
         queued: true,
-        stats: { mode: forceFullTimesheets ? "full" : "incremental" },
+        stats: { mode: forceFullTimesheets ? "full" : "incremental", queued_at: queuedAt },
         errors: [],
         warnings: [{ dataset: "Sync", message: "QuickBooks Time sync is running in the background." }],
       };
@@ -152,6 +167,13 @@ async function handleRequest(req: Request) {
   if (error) return jsonResponse({ error: error.message }, 400);
   return jsonResponse({ data });
 }
+function validSyncSince(value: string | null) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
 async function exchangeCode(settings: Record<string, string>, code: string) {
   const response = await fetch(Deno.env.get("QB_TIME_TOKEN_URL") || "https://rest.tsheets.com/api/v1/grant", {
     method: "POST",
