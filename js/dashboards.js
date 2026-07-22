@@ -1229,6 +1229,7 @@ async function fetchSyncStatus(since = null) {
     cache: "no-store",
   });
   const payload = await readPayload(response);
+  if (!response.ok && [502, 503, 504].includes(response.status)) return { status: "pending" };
   if (!response.ok) throw new Error(payload.error || `Sync status failed with status ${response.status}`);
   return payload.data || null;
 }
