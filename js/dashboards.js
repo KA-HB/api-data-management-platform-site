@@ -1260,8 +1260,8 @@ async function checkForDashboardUpdate() {
   dashboardFreshnessCheckRunning = true;
   try {
     const status = await fetchSyncStatus();
-    if (!status?.finished_at || !lastGeneralCoverage?.refreshed_at) return;
-    if (new Date(status.finished_at).getTime() > new Date(lastGeneralCoverage.refreshed_at).getTime()) {
+    if (!status?.finished_at || !status.started_at || !lastGeneralCoverage?.refreshed_at) return;
+    if (new Date(status.started_at).getTime() > new Date(lastGeneralCoverage.refreshed_at).getTime()) {
       await refreshDashboardAfterSync();
     }
   } finally {
