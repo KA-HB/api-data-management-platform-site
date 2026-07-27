@@ -17,9 +17,7 @@ const EXCLUDED_ADMIN_JOBCODE_PATTERN = /(^|[\s\-_:/])(?:pto|sick|holiday|overhea
 const AUTOMATIC_RAW_ROLLUP_FALLBACK = readBooleanFlag("data-platform-raw-rollup-fallback");
 const SYNC_POLL_INTERVAL_MS = 3000;
 const SYNC_COMPLETION_TIMEOUT_MS = 4 * 60 * 1000;
-const DASHBOARD_FRESHNESS_INTERVAL_MS = 30 * 1000;
 let syncStatusPolling = false;
-let dashboardFreshnessCheckRunning = false;
 
 function readBooleanFlag(key) {
   try {
@@ -43,10 +41,10 @@ if (profile) {
   renderShell(profile);
   await loadDatasets();
   await loadDashboard();
-  startDashboardFreshnessWatcher();
   $("#project-experience-lookup")?.addEventListener("submit", searchProjectExperience);
   $("#clear-project-experience")?.addEventListener("click", clearProjectExperienceLookup);
   $("#dashboard-qb-sync")?.addEventListener("click", syncQuickBooksTime);
+  $("#dashboard-refresh")?.addEventListener("click", refreshDashboardOnRequest);
 
   if (profile.role === "admin") {
     $("#qb-viz-filters")?.addEventListener("submit", applyQbFilters);
@@ -1240,6 +1238,16 @@ async function refreshDashboardAfterSync() {
   await loadDashboard();
 }
 
+async function refreshDashboardOnRequest() {
+  const button = $("#dashboard-refresh");
+  setButtonBusy(button, true, "Refreshing...");
+  try {
+    await refreshDashboardAfterSync();
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
 function syncCompletionMessage(result = {}) {
   const stats = result.stats || {};
   const warnings = stats.warnings || [];
@@ -1248,26 +1256,6 @@ function syncCompletionMessage(result = {}) {
   if (result.status === "failed") return `Sync failed: ${result.message || "Unknown sync error"}`;
   const label = result.status === "partial" ? "Sync completed with errors" : "Sync finished";
   return `${label}. Timesheets: ${formatNumber(stats.Timesheets)}; Employees: ${formatNumber(stats.Employees)}; Job Codes: ${formatNumber(stats["Job Codes"])}.${issueCount ? ` ${issueCount} warning${issueCount === 1 ? "" : "s"} logged.` : ""}`;
-}
-
-function startDashboardFreshnessWatcher() {
-  window.setInterval(() => {
-    checkForDashboardUpdate().catch((error) => console.warn("Dashboard freshness check failed", error));
-  }, DASHBOARD_FRESHNESS_INTERVAL_MS);
-}
-
-async function checkForDashboardUpdate() {
-  if (document.hidden || syncStatusPolling || dashboardFreshnessCheckRunning) return;
-  dashboardFreshnessCheckRunning = true;
-  try {
-    const status = await fetchSyncStatus();
-    if (!status?.finished_at || !status.started_at || !lastGeneralCoverage?.refreshed_at) return;
-    if (new Date(status.started_at).getTime() > new Date(lastGeneralCoverage.refreshed_at).getTime()) {
-      await refreshDashboardAfterSync();
-    }
-  } finally {
-    dashboardFreshnessCheckRunning = false;
-  }
 }
 
 function delay(milliseconds) {
