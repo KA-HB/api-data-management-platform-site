@@ -1283,7 +1283,7 @@ async function authHeaders() {
 
 function friendlySyncError(message) {
   const text = String(message || "");
-  if (/refresh[_ ]token.*invalid|token refresh failed.*invalid|invalid.*refresh[_ ]token/i.test(text)) {
+  if (/refresh[_ ]token.*invalid|token refresh failed.*invalid|invalid.*refresh[_ ]token|authorization expired|not connected|reconnect required/i.test(text)) {
     return "QuickBooks Time authorization expired. Open QuickBooks Time, select Connect / Reconnect QuickBooks Time, complete authorization, then retry sync.";
   }
   return text || "QuickBooks Time sync failed.";
@@ -2250,4 +2250,3 @@ function scopeSummary(data, payload = {}) {
   const employeeText = isEmployeeScoped(payload, data.employee_experience) ? ` Filtered to ${employeeScopeName(payload, data.employee_experience)}.` : "";
   return `${scope}: ${formatNumber(data.unique_records)} unique records from ${formatNumber(data.raw_records)} raw rows across ${formatNumber(data.dataset_count)} dataset${Number(data.dataset_count) === 1 ? "" : "s"}.${employeeText}${duplicateText}${sourceText}${refreshText}`;
 }
-
