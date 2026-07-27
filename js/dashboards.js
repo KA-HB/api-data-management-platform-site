@@ -1341,13 +1341,14 @@ function populateQbFilters(options) {
 }
 
 function normalizeFilterOptions(options = {}) {
+  const source = options && typeof options === "object" ? options : {};
   const fallback = emptyQbFilterOptions();
   return {
-    employees: Array.isArray(options.employees) ? options.employees : fallback.employees,
-    jobcode_level1: Array.isArray(options.jobcode_level1) ? options.jobcode_level1 : fallback.jobcode_level1,
-    jobcode_level2: Array.isArray(options.jobcode_level2) ? options.jobcode_level2 : fallback.jobcode_level2,
-    jobcode_level3: Array.isArray(options.jobcode_level3) ? options.jobcode_level3 : fallback.jobcode_level3,
-    service_items: Array.isArray(options.service_items) ? options.service_items : fallback.service_items,
+    employees: Array.isArray(source.employees) ? source.employees : fallback.employees,
+    jobcode_level1: Array.isArray(source.jobcode_level1) ? source.jobcode_level1 : fallback.jobcode_level1,
+    jobcode_level2: Array.isArray(source.jobcode_level2) ? source.jobcode_level2 : fallback.jobcode_level2,
+    jobcode_level3: Array.isArray(source.jobcode_level3) ? source.jobcode_level3 : fallback.jobcode_level3,
+    service_items: Array.isArray(source.service_items) ? source.service_items : fallback.service_items,
   };
 }
 
