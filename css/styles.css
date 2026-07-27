@@ -204,6 +204,13 @@ a { color: inherit; }
   margin-bottom: 22px;
 }
 
+.topbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 h1, h2, h3 { line-height: 1.15; margin: 0 0 10px; letter-spacing: 0; }
 h1 { font-size: 28px; }
 h2 { font-size: 20px; }
@@ -664,6 +671,7 @@ button.is-busy::before {
   .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }
   .content { padding: 18px; }
   .topbar { display: grid; }
+  .topbar-actions { justify-content: flex-start; }
   .inline-password { grid-template-columns: 1fr; }
   .search-primary { grid-template-columns: 1fr; }
 }
