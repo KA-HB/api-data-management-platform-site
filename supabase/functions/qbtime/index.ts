@@ -132,6 +132,17 @@ async function handleRequest(req: Request) {
 
   if (req.method === "POST" && action === "sync") {
     const syncOptions = { forceFullTimesheets };
+    const { data: connection, error: connectionError } = await service
+      .from("qbtime_settings")
+      .select("access_token,refresh_token")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (connectionError) return jsonResponse({ error: connectionError.message }, 400);
+    if (!connection?.access_token || !connection?.refresh_token) {
+      return jsonResponse({ error: reconnectRequiredMessage() }, 409);
+    }
+
     const runningSync = await findRecentRunningSync(service);
     if (runningSync) {
       const queuedResult = {
@@ -163,9 +174,11 @@ async function handleRequest(req: Request) {
     return jsonResponse({ data: result });
   }
 
-  const { data, error } = await service.from("qbtime_settings").select("id,client_id,redirect_uri,tenant_info,last_sync,created_at,updated_at").order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const { data, error } = await service.from("qbtime_settings").select("id,client_id,redirect_uri,tenant_info,last_sync,created_at,updated_at,access_token,refresh_token").order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (error) return jsonResponse({ error: error.message }, 400);
-  return jsonResponse({ data });
+  if (!data) return jsonResponse({ data: null });
+  const { access_token, refresh_token, ...safeSettings } = data;
+  return jsonResponse({ data: { ...safeSettings, connected: Boolean(access_token && refresh_token) } });
 }
 function validSyncSince(value: string | null) {
   if (!value) return null;
@@ -253,9 +266,22 @@ async function runSync(supabase: ReturnType<typeof serviceClient>, options: Sync
 
   try {
     let accessToken = settings.access_token;
-    if (!accessToken) throw new Error("QuickBooks Time is not connected");
+    if (!accessToken || !settings.refresh_token) throw new Error(reconnectRequiredMessage());
     if (settings.token_expires_at && new Date(settings.token_expires_at).getTime() < Date.now() + 120000) {
-      const refreshed = await refreshAccessToken(settings);
+      let refreshed;
+      try {
+        refreshed = await refreshAccessToken(settings);
+      } catch (error) {
+        const message = syncErrorMessage(error);
+        if (!isTerminalRefreshFailure(message)) throw error;
+        const { error: disconnectError } = await supabase.from("qbtime_settings").update({
+          access_token: null,
+          refresh_token: null,
+          token_expires_at: null,
+        }).eq("id", settings.id);
+        if (disconnectError) console.error("QuickBooks Time token revocation failed", syncErrorMessage(disconnectError));
+        throw new Error(reconnectRequiredMessage());
+      }
       accessToken = refreshed.access_token;
       await supabase.from("qbtime_settings").update({
         access_token: refreshed.access_token,
@@ -340,6 +366,15 @@ function syncErrorMessage(error: unknown) {
 function isForbiddenSyncError(message: string) {
   return /(^|\D)403(\D|$)|forbidden/i.test(message);
 }
+
+function reconnectRequiredMessage() {
+  return "QuickBooks Time authorization expired. Reconnect QuickBooks Time before running another sync.";
+}
+
+function isTerminalRefreshFailure(message: string) {
+  return /refresh token is missing|refresh[_ ]token.*invalid|invalid.*refresh[_ ]token|token refresh failed:\s*(400|401|404)(\D|$)/i.test(message);
+}
+
 async function refreshAccessToken(settings: Record<string, string>) {
   if (!settings.refresh_token) throw new Error("QuickBooks Time refresh token is missing");
   const response = await fetch(Deno.env.get("QB_TIME_TOKEN_URL") || "https://rest.tsheets.com/api/v1/grant", {
@@ -632,5 +667,4 @@ async function responseError(response: Response, fallback: string) {
   const clean = String(message || "").replace(/\s+/g, " ").slice(0, 240);
   return `${fallback}: ${response.status}${clean ? ` - ${clean}` : ""}`;
 }
-
 
