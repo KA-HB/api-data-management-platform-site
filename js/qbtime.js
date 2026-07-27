@@ -32,7 +32,13 @@ async function loadSettings() {
     $("#redirect-uri").value = payload.data.redirect_uri || "";
     $("#last-sync").textContent = payload.data.last_sync ? new Date(payload.data.last_sync).toLocaleString() : "Never";
   }
-  return loadConnectionStatus(Boolean(payload.data?.client_id), Boolean(payload.data?.connected));
+  const connected = Boolean(payload.data?.connected);
+  const syncButton = $("#qb-sync");
+  if (syncButton) {
+    syncButton.disabled = !connected;
+    syncButton.title = connected ? "" : "Reconnect QuickBooks Time before running a sync.";
+  }
+  return loadConnectionStatus(Boolean(payload.data?.client_id), connected);
 }
 
 async function loadConnectionStatus(hasSettings, connected) {
