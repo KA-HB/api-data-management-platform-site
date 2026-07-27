@@ -8,8 +8,11 @@ Deno.serve(async (req) => {
   }
 
   const supabase = serviceClient();
-  const { data: settings } = await supabase.from("qbtime_settings").select("id").limit(1).maybeSingle();
+  const { data: settings } = await supabase.from("qbtime_settings").select("id,access_token,refresh_token").limit(1).maybeSingle();
   if (!settings) return jsonResponse({ skipped: true, reason: "QuickBooks Time is not configured" });
+  if (!settings.access_token || !settings.refresh_token) {
+    return jsonResponse({ skipped: true, reason: "QuickBooks Time authorization expired; reconnect required" });
+  }
 
   const qbtimeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/qbtime?action=sync`;
   const response = await fetch(qbtimeUrl, {
