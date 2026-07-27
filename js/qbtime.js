@@ -32,13 +32,17 @@ async function loadSettings() {
     $("#redirect-uri").value = payload.data.redirect_uri || "";
     $("#last-sync").textContent = payload.data.last_sync ? new Date(payload.data.last_sync).toLocaleString() : "Never";
   }
-  return loadConnectionStatus(Boolean(payload.data?.client_id));
+  return loadConnectionStatus(Boolean(payload.data?.client_id), Boolean(payload.data?.connected));
 }
 
-async function loadConnectionStatus(hasSettings) {
+async function loadConnectionStatus(hasSettings, connected) {
   if (!hasSettings) {
     renderConnectionStatus("QuickBooks Time is not configured.", "error");
     return null;
+  }
+  if (!connected) {
+    renderConnectionStatus(friendlySyncError("reconnect required"), "error");
+    return "reconnect_required";
   }
 
   const { data, error } = await supabase
@@ -77,7 +81,7 @@ function renderConnectionStatus(message, type = "info") {
 }
 
 function requiresQuickBooksReconnect(message) {
-  return /refresh[_ ]token.*invalid|token refresh failed.*invalid|invalid.*refresh[_ ]token/i.test(String(message || ""));
+  return /refresh[_ ]token.*invalid|token refresh failed.*invalid|invalid.*refresh[_ ]token|authorization expired|not connected|reconnect required/i.test(String(message || ""));
 }
 
 function friendlySyncError(message) {
@@ -171,4 +175,3 @@ async function readPayload(response) {
     return { error: text || `Request failed with status ${response.status}` };
   }
 }
-
