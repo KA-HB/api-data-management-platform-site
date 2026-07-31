@@ -17,6 +17,7 @@ const EXCLUDED_ADMIN_JOBCODE_PATTERN = /(^|[\s\-_:/])(?:pto|sick|holiday|overhea
 const AUTOMATIC_RAW_ROLLUP_FALLBACK = readBooleanFlag("data-platform-raw-rollup-fallback");
 const SYNC_POLL_INTERVAL_MS = 3000;
 const SYNC_COMPLETION_TIMEOUT_MS = 4 * 60 * 1000;
+const DASHBOARD_REQUEST_TIMEOUT_MS = 8000;
 let syncStatusPolling = false;
 
 function readBooleanFlag(key) {
@@ -88,16 +89,46 @@ async function loadDatasets() {
   updateDatasetIndicator();
 }
 
+function withDashboardTimeout(request, fallback) {
+  let timeoutId;
+  const timeout = new Promise((resolve) => {
+    timeoutId = window.setTimeout(() => resolve(fallback), DASHBOARD_REQUEST_TIMEOUT_MS);
+  });
+  return Promise.race([Promise.resolve(request), timeout]).finally(() => window.clearTimeout(timeoutId));
+}
+
+function dashboardSummaryFallback() {
+  const datasets = availableDatasets.filter((row) => !/QuickBooks Time PTO/i.test(row.name || ""));
+  const records = datasets.reduce((total, row) => total + numeric(row.record_count), 0);
+  const byRecordCount = [...datasets].sort((a, b) => numeric(b.record_count) - numeric(a.record_count));
+  return {
+    role: profile.role,
+    datasets: datasets.length,
+    records,
+    api_keys: 0,
+    active_api_keys: 0,
+    records_by_dataset: byRecordCount,
+    records_by_day: [],
+    api_calls_by_day: [],
+    activity_by_day: [],
+    recent_uploads: [...datasets].sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0)).slice(0, 8),
+    recent_syncs: [],
+  };
+}
+
 async function loadDashboard() {
   const progress = startProgress("Loading dashboard data...");
   try {
-    const [{ data: summary, error }, { data: logs }, qbOptions] = await Promise.all([
-      supabase.rpc("dashboard_summary"),
-      supabase.from("activity_logs").select("action,details,created_at").order("created_at", { ascending: false }).limit(8),
-      supabase.rpc("dashboard_qbtime_filter_options"),
+    const [summaryResult, logResult, qbOptions, syncResult] = await Promise.all([
+      withDashboardTimeout(supabase.rpc("dashboard_summary"), { data: null, error: { message: "Dashboard summary timed out" } }),
+      withDashboardTimeout(supabase.from("activity_logs").select("action,details,created_at").order("created_at", { ascending: false }).limit(8), { data: [], error: null }),
+      withDashboardTimeout(supabase.rpc("dashboard_qbtime_filter_options"), { data: null, error: { message: "Dashboard filter options timed out" } }),
+      withDashboardTimeout(supabase.from("sync_logs").select("provider,status,message,stats,started_at,finished_at").order("started_at", { ascending: false }).limit(8), { data: [], error: null }),
     ]);
-
-    if (error) return stopProgress(progress, error.message, "error");
+    const summary = summaryResult?.data || dashboardSummaryFallback();
+    const logs = logResult?.data || [];
+    const recentSyncs = syncResult?.data || [];
+    if (summaryResult?.error) console.warn("Dashboard summary RPC failed; using dataset metadata fallback.", summaryResult.error.message);
 
     lastSummary = summary;
     const rpcFilterOptions = normalizeFilterOptions(qbOptions?.data);
@@ -111,7 +142,10 @@ async function loadDashboard() {
     qbFilterOptions = mergeFilterOptions(mergeFilterOptions(rpcFilterOptions, jobcodeReferenceOptions), employeeReferenceOptions);
     populateQbFilters(qbFilterOptions);
 
-    const experience = await callQbRollups(emptyQbPayload(), { allowDeltaFallback: false, allowJobcodeRebuild: false });
+    const experience = await withDashboardTimeout(
+      callQbRollups(emptyQbPayload(), { allowDeltaFallback: false, allowJobcodeRebuild: false }),
+      { data: null, error: { message: "Dashboard experience rollup timed out" } },
+    );
     lastGeneralCoverage = experience.data ? normalizeExperienceRollup(experience.data) : buildFastCoverageSummary(summary);
     lastGeneralCoverage.active_employee_count = Math.max(numeric(lastGeneralCoverage.active_employee_count), normalizeFilterOptions(qbFilterOptions).employees.length);
     qbFilterOptions = mergeFilterOptions(qbFilterOptions, buildFilterOptionsFromRollup(lastGeneralCoverage));
@@ -128,7 +162,7 @@ async function loadDashboard() {
     }
 
     renderRecentUploads(isExperienceDashboard() ? summary.recent_uploads || [] : [...availableDatasets].sort((a, b) => Number(b.record_count || 0) - Number(a.record_count || 0)));
-    renderRecentSyncs(summary.recent_syncs || []);
+    renderRecentSyncs(summary.recent_syncs?.length ? summary.recent_syncs : recentSyncs);
     renderRecentLogs(logs || []);
     if (AUTOMATIC_RAW_ROLLUP_FALLBACK || !normalizeFilterOptions(qbFilterOptions).service_items.length) {
       hydrateServiceItemOptions(loadRawServiceItemOptions());
@@ -144,9 +178,10 @@ function renderGeneralDashboard(summary, coverage) {
   setText("#metric-keys", formatNumber(summary?.api_keys));
   setText("#metric-raw-records", formatNumber(coverage?.raw_records ?? summary?.records));
   setText("#metric-records", formatNumber(coverage?.unique_records ?? summary?.records));
-  setText("#metric-hours", formatNumber(coverage?.filtered_hours ?? coverage?.hours));
+  setText("#metric-hours", coverage?.is_fast_fallback ? "-" : formatNumber(coverage?.filtered_hours ?? coverage?.hours));
   setText("#metric-employees", formatNumber(dashboardEmployeeMetric(coverage)));
-  setText("#metric-services", formatNumber(coverage?.filtered_service_items ?? coverage?.service_item_count));
+  const serviceCount = Math.max(numeric(coverage?.filtered_service_items ?? coverage?.service_item_count), normalizeFilterOptions(qbFilterOptions).service_items.length);
+  setText("#metric-services", serviceCount || !coverage?.is_fast_fallback ? formatNumber(serviceCount) : "-");
   setText("#data-scope-summary", hasNoUserDatasets ? "No dashboard datasets are assigned to this user yet. An admin can grant QuickBooks Time dashboard access from User Management." : coverage ? scopeSummary(coverage) : `Showing ${formatNumber(summary?.records)} authorized records. Full-year hours, employees, service-item totals, and duplicate removal require the latest Supabase search migration.`);
 
   renderChart("#records-by-dataset", "bar", coverage?.records_by_dataset || summary?.records_by_dataset || [], "name", coverage ? "records" : "record_count", coverage ? "Unique Records" : "Records");
@@ -2224,7 +2259,7 @@ function debounce(fn, delay) {
 
 function scopeSummary(data, payload = {}) {
   if (data.is_fast_fallback) {
-    return `Showing ${formatNumber(data.unique_records)} records across ${formatNumber(data.dataset_count)} dataset${Number(data.dataset_count) === 1 ? "" : "s"} from dataset metadata. Experience totals will update after the dashboard rollup finishes refreshing.`;
+    return `Showing ${formatNumber(data.unique_records)} records across ${formatNumber(data.dataset_count)} dataset${Number(data.dataset_count) === 1 ? "" : "s"} from dataset metadata. Detailed experience totals are still loading; use Refresh Dashboard to retry them.`;
   }
   const scope = data.dataset_name || "All authorized datasets";
   const sourceText = data.is_raw_delta_fallback
