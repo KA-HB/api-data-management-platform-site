@@ -238,17 +238,6 @@ function queueBackgroundSync(supabase: ReturnType<typeof serviceClient>, options
   return true;
 }
 
-function queueDashboardRebuild(supabase: ReturnType<typeof serviceClient>) {
-  const runtime = (globalThis as unknown as { EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void } }).EdgeRuntime;
-  if (typeof runtime?.waitUntil !== "function") return false;
-  runtime.waitUntil(supabase.rpc("rebuild_dashboard_experience_records").then(({ error }) => {
-    if (error) console.error("QuickBooks Time dashboard rebuild failed", syncErrorMessage(error));
-  }).catch((error) => {
-    console.error("QuickBooks Time dashboard rebuild failed", syncErrorMessage(error));
-  }));
-  return true;
-}
-
 async function runSync(supabase: ReturnType<typeof serviceClient>, options: SyncOptions = {}) {
   const started = new Date().toISOString();
   await supabase.from("sync_logs").update({
@@ -307,8 +296,9 @@ async function runSync(supabase: ReturnType<typeof serviceClient>, options: Sync
     if (permissionResult.error) {
       warnings.push({ dataset: "Permissions", message: permissionResult.error.message });
     }
-    if (!queueDashboardRebuild(supabase)) {
-      warnings.push({ dataset: "Dashboard Refresh", message: "Dashboard analytics rebuild could not be queued in this runtime." });
+    const dashboardRefreshResult = await supabase.rpc("rebuild_dashboard_experience_records");
+    if (dashboardRefreshResult.error) {
+      warnings.push({ dataset: "Dashboard Refresh", message: dashboardRefreshResult.error.message });
     }
     const lastSyncResult = await supabase.from("qbtime_settings").update({ last_sync: new Date().toISOString() }).eq("id", settings.id);
     if (lastSyncResult.error) warnings.push({ dataset: "Settings", message: lastSyncResult.error.message });
