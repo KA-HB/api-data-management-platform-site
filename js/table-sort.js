@@ -3,6 +3,7 @@
     "#project-experience-body",
     "#employee-experience-body",
     "#experience-detail-body",
+    "#monthly-report-body",
   ];
   const sortState = new WeakMap();
 
