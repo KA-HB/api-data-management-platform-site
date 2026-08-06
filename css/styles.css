@@ -675,3 +675,45 @@ button.is-busy::before {
   .inline-password { grid-template-columns: 1fr; }
   .search-primary { grid-template-columns: 1fr; }
 }
+
+
+/* Monthly billable-hours reporting */
+.report-controls { margin-bottom: 16px; }
+.report-toolbar {
+  grid-template-columns: minmax(220px, 320px) auto auto;
+  justify-content: start;
+  align-items: end;
+}
+.report-exclusions {
+  margin-top: 14px;
+  align-items: flex-start;
+}
+.report-exclusions strong {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+.report-exclusions > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.report-chart { min-height: 620px; }
+.report-chart .chart-scroll {
+  max-height: 720px;
+  overflow: auto;
+}
+.monthly-report-table { min-width: 980px; }
+.monthly-report-table th.numeric,
+.monthly-report-table td:nth-child(3),
+.monthly-report-table td:nth-child(4),
+.monthly-report-table td:nth-child(5),
+.monthly-report-table td:nth-child(6) { text-align: right; }
+.numeric-value {
+  display: block;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+@media (max-width: 860px) {
+  .report-toolbar { grid-template-columns: 1fr; }
+}
