@@ -136,10 +136,10 @@ async function authorize() {
 
 async function syncNow() {
   const button = $("#qb-sync");
-  const progress = startProgress("Syncing QuickBooks Time. This can take a minute...");
+  const progress = startProgress("Refreshing all configured QuickBooks Time data. This can take a few minutes...");
   setButtonBusy(button, true, "Syncing...");
   try {
-    const response = await fetch(`${FUNCTIONS_BASE_URL}/qbtime?action=sync`, { method: "POST", headers: await authHeaders() });
+    const response = await fetch(`${FUNCTIONS_BASE_URL}/qbtime?action=sync&mode=full`, { method: "POST", headers: await authHeaders() });
     const payload = await readPayload(response);
     if (!response.ok) {
       stopProgress(progress, friendlySyncError(payload.error || `Sync failed with status ${response.status}`), "error");
