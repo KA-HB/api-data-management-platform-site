@@ -81,6 +81,14 @@ export function renderShell(profile) {
   startSessionWatcher();
   initTheme();
   const nav = document.querySelector(".nav");
+  if (nav && !nav.querySelector('a[href="./monthly-report.html"]')) {
+    const reportLink = document.createElement("a");
+    reportLink.href = "./monthly-report.html";
+    reportLink.textContent = "Monthly Report";
+    reportLink.classList.toggle("active", location.pathname.endsWith("/monthly-report.html"));
+    const dashboardLink = nav.querySelector('a[href="./admin-dashboard.html"], a[href="./user-dashboard.html"]');
+    dashboardLink?.insertAdjacentElement("afterend", reportLink);
+  }
   if (nav && !document.querySelector("[data-theme-toggle]")) {
     const themeButton = document.createElement("button");
     themeButton.type = "button";
