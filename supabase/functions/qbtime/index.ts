@@ -442,7 +442,7 @@ async function syncResourceDataset(
     const { start: configuredStart, end: configuredEnd } = configuredDateWindow();
     const end = forceFullWindow ? configuredEnd : new Date();
     const latestWorkDate = forceFullWindow ? null : await latestDatasetWorkDate(supabase, dataset.id);
-    const overlapDays = Math.max(Number(Deno.env.get("QB_TIME_INCREMENTAL_OVERLAP_DAYS") || "7"), 0);
+    const overlapDays = Math.max(Number(Deno.env.get("QB_TIME_INCREMENTAL_OVERLAP_DAYS") || "45"), 0);
     const catchupStart = latestWorkDate
       ? maxDate(subtractUtcDays(new Date(`${latestWorkDate}T00:00:00Z`), overlapDays), configuredStart)
       : configuredStart;
