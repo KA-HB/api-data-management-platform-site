@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Monthly Billable Hours</title>
+  <script src="../js/theme-init.js"></script>
+  <link rel="stylesheet" href="../css/styles.css?v=20260806a">
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand">Data Platform</div>
+    <nav class="nav">
+      <a href="./admin-dashboard.html">Dashboard</a>
+      <a class="active" href="./monthly-report.html">Monthly Report</a>
+      <a data-admin-only href="./anomalies.html">Anomalies</a>
+      <a data-admin-only href="./users.html">Users</a>
+      <a href="./datasets.html">Datasets</a>
+      <a href="./api-keys.html">API Keys</a>
+      <a data-admin-only href="./logs.html">Activity Logs</a>
+      <a data-admin-only href="./qbtime.html">QuickBooks Time</a>
+      <a href="./settings.html">Settings</a>
+      <button data-logout>Logout</button>
+    </nav>
+  </aside>
+  <main class="content">
+    <div class="topbar">
+      <div>
+        <h1>Monthly Billable Hours</h1>
+        <p data-user-email></p>
+      </div>
+    </div>
+
+    <section class="panel report-controls">
+      <div class="section-head">
+        <h2>Reporting Month</h2>
+        <p id="report-status">Select a month to total billable hours by Job Code 1 and Job Code 2.</p>
+      </div>
+      <form id="monthly-report-form" class="toolbar report-toolbar">
+        <label>Month <input id="report-month" type="month" required></label>
+        <button id="generate-report" type="submit">Generate Report</button>
+        <button id="export-report" class="secondary" type="button" disabled>Export CSV</button>
+      </form>
+      <div class="legend report-exclusions">
+        <strong>Excluded</strong>
+        <div id="excluded-categories"></div>
+      </div>
+    </section>
+
+    <section class="grid four">
+      <div class="metric"><strong id="metric-billable-hours">-</strong><span>Billable hours</span></div>
+      <div class="metric"><strong id="metric-jobcode-1">-</strong><span>Job Code 1</span></div>
+      <div class="metric"><strong id="metric-jobcode-pairs">-</strong><span>Job 1 / Job 2 pairs</span></div>
+      <div class="metric"><strong id="metric-time-entries">-</strong><span>Time entries</span></div>
+    </section>
+
+    <section class="panel chart-panel wide-chart report-chart">
+      <div class="section-head">
+        <h2>Billable Hours by Job Code 1</h2>
+        <p>Scroll inside the chart when the month contains many jobs.</p>
+      </div>
+      <div class="chart-scroll">
+        <div id="report-chart-frame" class="chart-frame">
+          <canvas id="monthly-hours-chart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <h2>Job Code Detail</h2>
+        <p id="report-table-summary">Generate a report to load monthly totals.</p>
+      </div>
+      <div class="table-wrap">
+        <table class="monthly-report-table">
+          <thead>
+            <tr>
+              <th>Job Code 1</th>
+              <th>Job Code 2</th>
+              <th class="numeric">Billable Hours</th>
+              <th class="numeric">Month Share</th>
+              <th class="numeric">Entries</th>
+              <th class="numeric">Employees</th>
+              <th>First Work</th>
+              <th>Last Work</th>
+            </tr>
+          </thead>
+          <tbody id="monthly-report-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script type="module" src="../js/monthly-report.js?v=20260806a"></script>
+<script src="../js/table-sort.js?v=20260625a" defer></script>
+</body>
+</html>
