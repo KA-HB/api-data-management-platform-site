@@ -49,7 +49,11 @@ begin
     where e.employee <> 'Unassigned'
       and e.hours > 0
       and e.work_date between historical_start and current_end
-      and public.matches_employee_name(e.employee, e.employee_id, employee_filter)
+      and (
+        coalesce(btrim(employee_filter), '') = ''
+        or lower(coalesce(e.employee_id, '')) = lower(btrim(employee_filter))
+        or e.employee ilike '%' || btrim(employee_filter) || '%'
+      )
       and (coalesce(jobcode_level1_filter, '') = '' or e.jobcode_level1 ilike '%' || jobcode_level1_filter || '%')
       and (coalesce(jobcode_level2_filter, '') = '' or e.jobcode_level2 ilike '%' || jobcode_level2_filter || '%')
   ),
