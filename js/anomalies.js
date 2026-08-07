@@ -7,15 +7,22 @@ const charts = new Map();
 let filterOptions = null;
 let lastAnomalies = [];
 let hasRunDetection = false;
+let lastBillingFindings = [];
+let hasRunBillingAudit = false;
 
 if (profile) {
   renderShell(profile);
   await loadFilterOptions();
   bindEvents();
+  setBillingDefaults();
+  resetBillingAudit();
   resetResults();
 }
 
 function bindEvents() {
+  $("#billing-audit-filters")?.addEventListener("submit", runBillingAudit);
+  $("#clear-billing-audit")?.addEventListener("click", clearBillingAudit);
+  $("#export-billing-audit")?.addEventListener("click", exportBillingAudit);
   $("#anomaly-filters")?.addEventListener("submit", runDetection);
   $("#clear-anomaly-filters")?.addEventListener("click", clearFilters);
   $("#export-anomalies")?.addEventListener("click", exportCsv);
@@ -86,6 +93,126 @@ function filterPayload() {
     max_employee_share: numberValue("#filter-max-share", 5) / 100,
     max_timesheets: numberValue("#filter-max-timesheets", 3),
   };
+}
+
+
+async function runBillingAudit(event = null) {
+  event?.preventDefault();
+  const payload = billingAuditPayload();
+  if (!payload.historical_start || !payload.historical_end || !payload.current_start || !payload.current_end) {
+    return toast("Choose both historical and current date ranges.", "error");
+  }
+  if (payload.historical_end >= payload.current_start) {
+    return toast("Historical data must end before the current period starts.", "error");
+  }
+
+  const button = event?.submitter || $("#run-billing-audit");
+  const progress = startProgress("Comparing current billing choices with employee history...");
+  setButtonBusy(button, true, "Auditing...");
+  const { data, error } = await supabase.rpc("qbtime_billing_behavior_audit", payload);
+  setButtonBusy(button, false);
+  if (error) return stopProgress(progress, error.message, "error");
+  stopProgress(progress);
+  hasRunBillingAudit = true;
+  renderBillingAudit(data || {});
+}
+
+function billingAuditPayload() {
+  return {
+    historical_start: $("#audit-history-start")?.value || null,
+    historical_end: $("#audit-history-end")?.value || null,
+    current_start: $("#audit-current-start")?.value || null,
+    current_end: $("#audit-current-end")?.value || null,
+    employee_filter: $("#audit-employee")?.value.trim() || null,
+    jobcode_level1_filter: $("#audit-jobcode-1")?.value.trim() || null,
+    jobcode_level2_filter: $("#audit-jobcode-2")?.value.trim() || null,
+    service_item_filter: $("#audit-service-item")?.value.trim() || null,
+    min_history_entries: numberValue("#audit-min-history", 3),
+    limit_count: numberValue("#audit-limit", 250),
+  };
+}
+
+function renderBillingAudit(data) {
+  const summary = data.summary || {};
+  lastBillingFindings = data.findings || [];
+  setText("#audit-metric-findings", formatNumber(summary.findings));
+  setText("#audit-metric-high", formatNumber(summary.high_findings));
+  setText("#audit-metric-employees", formatNumber(summary.employees_flagged));
+  setText("#audit-metric-reviewed", formatNumber(summary.current_entries));
+
+  const approvalNote = Number(summary.approval_metadata_entries || 0)
+    ? " Explicitly unapproved historical entries were excluded."
+    : " Approval status was not present in the synced history, so all eligible historical entries were used.";
+  setText("#billing-audit-summary",
+    `${formatNumber(summary.current_entries)} current entries (${formatNumber(summary.current_hours)} hours) compared with history from ${formatDate(summary.historical_start)} to ${formatDate(summary.historical_end)}.${approvalNote}`);
+  setText("#billing-audit-results-summary", lastBillingFindings.length
+    ? `${formatNumber(lastBillingFindings.length)} findings shown; ${formatNumber(summary.correct_combinations)} current combinations matched their historical pattern.`
+    : `No billing behavior findings; ${formatNumber(summary.correct_combinations)} current combinations matched their historical pattern.`);
+
+  renderChart("#audit-by-result", "bar", data.by_result || [], "result", "count", "Findings");
+  renderChart("#audit-by-employee", "bar", data.by_employee || [], "employee", "findings", "Findings");
+
+  renderRows($("#billing-audit-results-body"), lastBillingFindings, [
+    (r) => escapeHtml(r.result),
+    (r) => `<span class="status ${severityClass(r.severity)}">${escapeHtml(priorityLabel(r.severity))}</span>`,
+    (r) => escapeHtml(r.employee),
+    (r) => escapeHtml(r.reason),
+    (r) => escapeHtml(detailJobcodeLabel(r, 1)),
+    (r) => escapeHtml(detailJobcodeLabel(r, 2)),
+    (r) => escapeHtml(detailJobcodeLabel(r, 3)),
+    (r) => escapeHtml(displayServiceLabel(r.service_item)),
+    (r) => escapeHtml(r.current_billable),
+    (r) => formatNumber(r.current_hours),
+    (r) => formatNumber(r.current_entries),
+    (r) => r.historical_billable_pct == null ? "No exact history" : `${formatNumber(r.historical_billable_pct)}%`,
+    (r) => r.historical_entries == null ? "-" : formatNumber(r.historical_entries),
+    (r) => `${formatDate(r.first_work)} - ${formatDate(r.last_work)}`,
+  ]);
+}
+
+function setBillingDefaults() {
+  const today = new Date();
+  const currentStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const historicalEnd = new Date(currentStart);
+  historicalEnd.setDate(historicalEnd.getDate() - 1);
+  const historicalStart = new Date(currentStart);
+  historicalStart.setFullYear(historicalStart.getFullYear() - 1);
+  $("#audit-history-start").value = localDate(historicalStart);
+  $("#audit-history-end").value = localDate(historicalEnd);
+  $("#audit-current-start").value = localDate(currentStart);
+  $("#audit-current-end").value = localDate(today);
+}
+
+function clearBillingAudit() {
+  $("#billing-audit-filters")?.reset();
+  setBillingDefaults();
+  resetBillingAudit();
+}
+
+function resetBillingAudit() {
+  hasRunBillingAudit = false;
+  lastBillingFindings = [];
+  setText("#audit-metric-findings", "-");
+  setText("#audit-metric-high", "-");
+  setText("#audit-metric-employees", "-");
+  setText("#audit-metric-reviewed", "-");
+  setText("#billing-audit-summary", "Compare current billable choices with each employee's approved history.");
+  setText("#billing-audit-results-summary", "Run the billing audit to load findings.");
+  destroyCharts(["#audit-by-result", "#audit-by-employee"]);
+  renderRows($("#billing-audit-results-body"), [], Array.from({ length: 14 }, () => () => ""));
+}
+
+function exportBillingAudit() {
+  if (!lastBillingFindings.length) return toast("Run the billing audit before exporting.", "error");
+  const headers = ["result", "severity", "employee", "reason", "jobcode_level1", "jobcode_level2", "jobcode_level3", "service_item", "current_billable", "current_hours", "current_entries", "historical_billable_pct", "job_historical_billable_pct", "historical_hours", "historical_entries", "first_work", "last_work"];
+  downloadCsv("qbtime-billing-behavior-audit.csv", headers, lastBillingFindings);
+}
+
+function localDate(value) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function renderAnomalies(data) {
@@ -375,8 +502,7 @@ function resetResults() {
   setText("#anomaly-filter-summary", "Choose filters, then run rare-combination detection.");
   setText("#anomaly-results-summary", "Run detection to load results.");
   renderAnomalyInsights({ summary: {}, anomalies: [] });
-  charts.forEach((chart) => chart.destroy());
-  charts.clear();
+  destroyCharts(["#anomalies-by-employee", "#anomalies-by-reason", "#anomalies-by-service"]);
   renderRows($("#anomaly-results-body"), [], [
     () => "",
     () => "",
@@ -397,14 +523,25 @@ function resetResults() {
 function exportCsv() {
   if (!lastAnomalies.length) return toast("Run anomaly detection before exporting.", "error");
   const headers = ["severity", "employee", "reason", "jobcode_level1", "jobcode_level2", "jobcode_level3", "service_item", "hours", "timesheets", "employee_hour_share", "employee_timesheet_share", "peer_employee_count", "anomaly_score", "first_work", "last_work"];
-  const lines = [headers.join(",")].concat(lastAnomalies.map((row) => headers.map((header) => csvCell(row[header])).join(",")));
+  downloadCsv("qbtime-anomalies.csv", headers, lastAnomalies);
+}
+
+function downloadCsv(filename, headers, rows) {
+  const lines = [headers.join(",")].concat(rows.map((row) => headers.map((header) => csvCell(row[header])).join(",")));
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "qbtime-anomalies.csv";
+  link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function destroyCharts(selectors) {
+  selectors.forEach((selector) => {
+    charts.get(selector)?.destroy();
+    charts.delete(selector);
+  });
 }
 
 function csvCell(value) {
