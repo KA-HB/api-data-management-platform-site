@@ -555,7 +555,7 @@ function modifiedSinceWithOverlap(value: string) {
   if (Number.isNaN(parsed.getTime())) return value;
   const overlapHours = Math.max(Number(Deno.env.get("QB_TIME_MODIFIED_OVERLAP_HOURS") || "24"), 0);
   parsed.setTime(parsed.getTime() - overlapHours * 60 * 60 * 1000);
-  return parsed.toISOString();
+  return parsed.toISOString().replace(/\.\d{3}Z$/, "+00:00");
 }
 
 async function fetchModifiedRows(resource: string, accessToken: string, modifiedSince: string, perPage: number, maxPages: number) {
