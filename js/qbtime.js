@@ -136,7 +136,7 @@ async function authorize() {
 
 async function syncNow() {
   const button = $("#qb-sync");
-  const progress = startProgress("Refreshing the latest 45 days of QuickBooks Time data. This can take a few minutes...");
+  const progress = startProgress("Refreshing recent QuickBooks Time data and historical entries changed since the last pull. This can take a few minutes...");
   setButtonBusy(button, true, "Syncing...");
   try {
     const response = await fetch(`${FUNCTIONS_BASE_URL}/qbtime?action=sync`, { method: "POST", headers: await authHeaders() });
