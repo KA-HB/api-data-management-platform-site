@@ -209,7 +209,7 @@ function fullSyncRequested(url: URL) {
   return mode === "full" || full === "true" || full === "1" || Deno.env.get("QB_TIME_FORCE_FULL_SYNC") === "true";
 }
 
-type SyncOptions = { forceFullTimesheets?: boolean };
+type SyncOptions = { forceFullTimesheets?: boolean; modifiedSince?: string | null };
 
 async function findRecentRunningSync(supabase: ReturnType<typeof serviceClient>) {
   const recentThreshold = new Date(Date.now() - 30 * 60 * 1000).toISOString();
@@ -247,6 +247,10 @@ async function runSync(supabase: ReturnType<typeof serviceClient>, options: Sync
   }).eq("status", "running").is("finished_at", null);
   const { data: settings, error: settingsError } = await supabase.from("qbtime_settings").select("*").order("created_at", { ascending: false }).limit(1).single();
   if (settingsError || !settings) throw new Error(settingsError?.message || "QuickBooks Time settings are not configured");
+  const syncOptions: SyncOptions = {
+    ...options,
+    modifiedSince: options.forceFullTimesheets ? null : options.modifiedSince || settings.last_sync || null,
+  };
   const { data: log, error: logError } = await supabase.from("sync_logs").insert({ status: "running", started_at: started }).select("id").single();
   const stats: Record<string, number> = {};
   const errors: Array<{ dataset: string; message: string }> = [];
@@ -281,7 +285,7 @@ async function runSync(supabase: ReturnType<typeof serviceClient>, options: Sync
 
     for (const resource of resources) {
       try {
-        stats[resource.dataset] = await syncResourceDataset(supabase, resource, accessToken, options);
+        stats[resource.dataset] = await syncResourceDataset(supabase, resource, accessToken, syncOptions);
       } catch (error) {
         const message = syncErrorMessage(error);
         if (resource.optional && isForbiddenSyncError(message)) {
@@ -306,10 +310,10 @@ async function runSync(supabase: ReturnType<typeof serviceClient>, options: Sync
     await updateSyncLog(supabase, log?.id, {
       status,
       message: errors.map((error) => `${error.dataset}: ${error.message}`).join("; ") || warnings.map((warning) => `${warning.dataset}: ${warning.message}`).join("; ") || null,
-      stats: { ...stats, mode: options.forceFullTimesheets ? "full" : "incremental", errors, warnings },
+      stats: { ...stats, mode: syncOptions.forceFullTimesheets ? "full" : "incremental", errors, warnings },
       finished_at: new Date().toISOString(),
     });
-    return { status, stats: { ...stats, mode: options.forceFullTimesheets ? "full" : "incremental", errors, warnings }, errors, warnings };
+    return { status, stats: { ...stats, mode: syncOptions.forceFullTimesheets ? "full" : "incremental", errors, warnings }, errors, warnings };
   } catch (error) {
     await updateSyncLog(supabase, log?.id, { status: "failed", message: syncErrorMessage(error), stats, finished_at: new Date().toISOString() });
     throw error;
@@ -446,9 +450,14 @@ async function syncResourceDataset(
     const catchupStart = latestWorkDate
       ? maxDate(subtractUtcDays(new Date(`${latestWorkDate}T00:00:00Z`), overlapDays), configuredStart)
       : configuredStart;
-    const rows = await fetchDateWindowRowsInChunks(resource.endpoint, accessToken, catchupStart, end, perPage, maxPages);
-    const deletedRows = await deleteMissingQbTimeDatasetRows(supabase, dataset.id, catchupStart, end, rows);
+    const recentRows = await fetchDateWindowRowsInChunks(resource.endpoint, accessToken, catchupStart, end, perPage, maxPages);
+    const modifiedRows = !forceFullWindow && options.modifiedSince
+      ? await fetchModifiedRows(resource.endpoint, accessToken, modifiedSinceWithOverlap(options.modifiedSince), perPage, maxPages)
+      : [];
+    const rows = [...recentRows, ...modifiedRows];
+    const deletedRows = await deleteMissingQbTimeDatasetRows(supabase, dataset.id, catchupStart, end, recentRows);
     if (deletedRows) console.log(`QuickBooks Time ${resource.dataset} removed ${deletedRows} stale rows from the refreshed date window.`);
+    if (modifiedRows.length) console.log(`QuickBooks Time ${resource.dataset} refreshed ${modifiedRows.length} rows modified since the previous pull.`);
     await upsertDatasetRows(supabase, dataset.id, rows);
     if (forceFullWindow && rows.length) await deleteLegacyDatasetDateRange(supabase, dataset.id, catchupStart, end);
     const total = await countDatasetRecords(supabase, dataset.id);
@@ -531,6 +540,29 @@ async function fetchDateWindowRows(resource: string, accessToken: string, start:
     url.searchParams.set("page", String(page));
     url.searchParams.set("start_date", dateParam(start));
     url.searchParams.set("end_date", dateParam(end));
+    const pageRows = await fetchPageRows(url, accessToken, resource);
+    rows.push(...pageRows.rows);
+    if (!pageRows.more || !pageRows.rows.length) break;
+  }
+  return rows;
+}
+
+function modifiedSinceWithOverlap(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const overlapHours = Math.max(Number(Deno.env.get("QB_TIME_MODIFIED_OVERLAP_HOURS") || "24"), 0);
+  parsed.setTime(parsed.getTime() - overlapHours * 60 * 60 * 1000);
+  return parsed.toISOString();
+}
+
+async function fetchModifiedRows(resource: string, accessToken: string, modifiedSince: string, perPage: number, maxPages: number) {
+  const base = Deno.env.get("QB_TIME_API_URL") || "https://rest.tsheets.com/api/v1";
+  const rows: unknown[] = [];
+  for (let page = 1; page <= maxPages; page += 1) {
+    const url = new URL(`${base}/${resource}`);
+    url.searchParams.set("per_page", String(perPage));
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("modified_since", modifiedSince);
     const pageRows = await fetchPageRows(url, accessToken, resource);
     rows.push(...pageRows.rows);
     if (!pageRows.more || !pageRows.rows.length) break;
