@@ -184,7 +184,7 @@ function validSyncSince(value: string | null) {
   if (!value) return null;
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString();
+  return parsed.toISOString().replace(/\.\d{3}Z$/, "+00:00");
 }
 
 async function exchangeCode(settings: Record<string, string>, code: string) {
@@ -304,8 +304,11 @@ async function runSync(supabase: ReturnType<typeof serviceClient>, options: Sync
     if (dashboardRefreshResult.error) {
       warnings.push({ dataset: "Dashboard Refresh", message: dashboardRefreshResult.error.message });
     }
-    const lastSyncResult = await supabase.from("qbtime_settings").update({ last_sync: new Date().toISOString() }).eq("id", settings.id);
-    if (lastSyncResult.error) warnings.push({ dataset: "Settings", message: lastSyncResult.error.message });
+    const timesheetsSucceeded = !errors.some((error) => error.dataset === "Timesheets");
+    if (timesheetsSucceeded) {
+      const lastSyncResult = await supabase.from("qbtime_settings").update({ last_sync: new Date().toISOString() }).eq("id", settings.id);
+      if (lastSyncResult.error) warnings.push({ dataset: "Settings", message: lastSyncResult.error.message });
+    }
     const status = errors.length ? "partial" : "success";
     await updateSyncLog(supabase, log?.id, {
       status,
