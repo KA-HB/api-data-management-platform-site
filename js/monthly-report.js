@@ -66,7 +66,7 @@ function renderReport(data) {
       : "No billable hours were found for " + monthLabel + "."
   );
 
-  renderExclusions(data.excluded_categories || []);
+  renderExclusions(["Billable is not Yes"]);
   renderChart(data.by_jobcode1 || []);
   renderRows($("#monthly-report-body"), rows, [
     (row) => escapeHtml(row.jobcode_level1),
