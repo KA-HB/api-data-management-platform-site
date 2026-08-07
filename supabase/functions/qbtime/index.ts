@@ -447,6 +447,8 @@ async function syncResourceDataset(
       ? maxDate(subtractUtcDays(new Date(`${latestWorkDate}T00:00:00Z`), overlapDays), configuredStart)
       : configuredStart;
     const rows = await fetchDateWindowRowsInChunks(resource.endpoint, accessToken, catchupStart, end, perPage, maxPages);
+    const deletedRows = await deleteMissingQbTimeDatasetRows(supabase, dataset.id, catchupStart, end, rows);
+    if (deletedRows) console.log(`QuickBooks Time ${resource.dataset} removed ${deletedRows} stale rows from the refreshed date window.`);
     await upsertDatasetRows(supabase, dataset.id, rows);
     if (forceFullWindow && rows.length) await deleteLegacyDatasetDateRange(supabase, dataset.id, catchupStart, end);
     const total = await countDatasetRecords(supabase, dataset.id);
@@ -545,6 +547,51 @@ async function deleteLegacyDatasetDateRange(supabase: ReturnType<typeof serviceC
     .lte("work_date", dateParam(end))
     .not("source_hash", "like", "qbtime:%");
   if (error) throw error;
+}
+
+async function deleteMissingQbTimeDatasetRows(
+  supabase: ReturnType<typeof serviceClient>,
+  datasetId: string,
+  start: Date,
+  end: Date,
+  rows: unknown[],
+) {
+  const returnedHashes = new Set<string>();
+  for (const row of rows) {
+    const stableId = row && typeof row === "object" && "id" in row
+      ? String((row as { id?: unknown }).id || "").trim()
+      : "";
+    if (stableId) returnedHashes.add(`qbtime:${stableId}`);
+  }
+
+  const existingRows: Array<{ id: string; source_hash: string | null }> = [];
+  const pageSize = 1000;
+  for (let offset = 0;; offset += pageSize) {
+    const { data, error } = await supabase
+      .from("records")
+      .select("id,source_hash")
+      .eq("dataset_id", datasetId)
+      .gte("work_date", dateParam(start))
+      .lte("work_date", dateParam(end))
+      .like("source_hash", "qbtime:%")
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    const page = data || [];
+    existingRows.push(...page);
+    if (page.length < pageSize) break;
+  }
+
+  const staleIds = existingRows
+    .filter((row) => row.source_hash && !returnedHashes.has(row.source_hash))
+    .map((row) => row.id);
+  for (let i = 0; i < staleIds.length; i += RECORD_UPSERT_BATCH_SIZE) {
+    const { error } = await supabase
+      .from("records")
+      .delete()
+      .in("id", staleIds.slice(i, i + RECORD_UPSERT_BATCH_SIZE));
+    if (error) throw error;
+  }
+  return staleIds.length;
 }
 
 async function countDatasetRecords(supabase: ReturnType<typeof serviceClient>, datasetId: string) {
