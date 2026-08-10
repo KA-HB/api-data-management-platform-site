@@ -1,13 +1,14 @@
 import { supabase } from "./supabaseClient.js";
-import { AUTH_TIMEOUT_REASON_KEY, redirectFromLogin } from "./auth.js";
+import { AUTH_TIMEOUT_REASON_KEY, redirectFromLogin } from "./auth.js?v=20260810d";
 import { $, initTheme, setButtonBusy, toast } from "./ui.js";
 
 const azureLogin = $("#azure-login");
 const authMessage = $("#auth-message");
 
 initTheme();
-await redirectFromLogin();
+azureLogin?.addEventListener("click", beginMicrosoftSignIn);
 showTimeoutMessage();
+void redirectFromLogin();
 
 function showAuthMessage(message) {
   if (authMessage) {
@@ -34,21 +35,23 @@ function microsoftPromptMode() {
     return "login";
   }
 }
-azureLogin?.addEventListener("click", async () => {
+async function beginMicrosoftSignIn() {
+  const prompt = microsoftPromptMode();
   setButtonBusy(azureLogin, true, "Redirecting...");
-  showAuthMessage("Redirecting to Microsoft...");
+  if (authMessage) authMessage.hidden = true;
   const redirectTo = new URL("./pages/auth-callback.html", location.href).toString();
   const { error } = await supabase.auth.signInWithOAuth({
     provider: "azure",
     options: {
       scopes: "email",
       redirectTo,
-      queryParams: { prompt: microsoftPromptMode() },
+      queryParams: { prompt },
     },
   });
 
   if (error) {
     setButtonBusy(azureLogin, false);
+    showAuthMessage(error.message);
     toast(error.message, "error");
   }
-});
+}
