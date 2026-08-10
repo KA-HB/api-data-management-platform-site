@@ -121,6 +121,24 @@ a { color: inherit; }
   overflow: clip;
 }
 
+html:not([data-shell-ready="true"]) .app-shell > .sidebar,
+html:not([data-shell-ready="true"]) .app-shell > .content {
+  visibility: hidden;
+}
+
+html:not([data-shell-ready="true"]) .app-shell::before {
+  content: "Loading your workspace...";
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .sidebar {
   background: var(--sidebar);
   color: #f9fafb;
