@@ -142,13 +142,13 @@ function prepareShellNavigation(nav, profile) {
     const mark = document.createElement("span");
     mark.className = "brand-mark";
     mark.setAttribute("aria-hidden", "true");
-    mark.textContent = "DP";
+    mark.textContent = "HB";
     const copy = document.createElement("span");
     copy.className = "brand-copy";
     const name = document.createElement("strong");
-    name.textContent = "Data Platform";
+    name.textContent = "Hayat Brown";
     const descriptor = document.createElement("small");
-    descriptor.textContent = "Workforce analytics";
+    descriptor.textContent = "Data Tools Site";
     copy.append(name, descriptor);
     brand.append(mark, copy);
   }
