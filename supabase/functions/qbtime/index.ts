@@ -4,7 +4,7 @@ import { serviceClient, userClient } from "../_shared/supabase.ts";
 type SyncResource = { endpoint: string; dataset: string; useDateRange?: boolean; optional?: boolean };
 type DatasetRecord = { dataset_id: string; json_data: unknown; source_hash: string };
 
-const RECORD_UPSERT_BATCH_SIZE = 100;
+const RECORD_UPSERT_BATCH_SIZE = 500;
 const MIN_RECORD_UPSERT_BATCH_SIZE = 25;
 
 const resources: SyncResource[] = [
@@ -212,7 +212,7 @@ function fullSyncRequested(url: URL) {
 type SyncOptions = { forceFullTimesheets?: boolean; modifiedSince?: string | null };
 
 async function findRecentRunningSync(supabase: ReturnType<typeof serviceClient>) {
-  const recentThreshold = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const recentThreshold = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   const { data, error } = await supabase
     .from("sync_logs")
     .select("id,started_at")
@@ -224,6 +224,22 @@ async function findRecentRunningSync(supabase: ReturnType<typeof serviceClient>)
     .maybeSingle();
   if (error) {
     console.warn("QuickBooks Time running-sync check failed", syncErrorMessage(error));
+    return null;
+  }
+  if (!data) return null;
+
+  const { data: settings } = await supabase
+    .from("qbtime_settings")
+    .select("last_sync")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (settings?.last_sync && new Date(settings.last_sync).getTime() >= new Date(data.started_at).getTime()) {
+    await supabase.from("sync_logs").update({
+      status: "success",
+      message: "Data import completed; post-sync dashboard refresh exceeded the function window.",
+      finished_at: settings.last_sync,
+    }).eq("id", data.id);
     return null;
   }
   return data;
@@ -300,27 +316,44 @@ async function runSync(supabase: ReturnType<typeof serviceClient>, options: Sync
     if (permissionResult.error) {
       warnings.push({ dataset: "Permissions", message: permissionResult.error.message });
     }
-    const dashboardRefreshResult = await supabase.rpc("rebuild_dashboard_experience_records");
-    if (dashboardRefreshResult.error) {
-      warnings.push({ dataset: "Dashboard Refresh", message: dashboardRefreshResult.error.message });
-    }
     const timesheetsSucceeded = !errors.some((error) => error.dataset === "Timesheets");
     if (timesheetsSucceeded) {
       const lastSyncResult = await supabase.from("qbtime_settings").update({ last_sync: new Date().toISOString() }).eq("id", settings.id);
       if (lastSyncResult.error) warnings.push({ dataset: "Settings", message: lastSyncResult.error.message });
     }
     const status = errors.length ? "partial" : "success";
+    const result = {
+      status,
+      stats: { ...stats, mode: syncOptions.forceFullTimesheets ? "full" : "incremental", errors, warnings },
+      errors,
+      warnings,
+    };
     await updateSyncLog(supabase, log?.id, {
       status,
       message: errors.map((error) => `${error.dataset}: ${error.message}`).join("; ") || warnings.map((warning) => `${warning.dataset}: ${warning.message}`).join("; ") || null,
-      stats: { ...stats, mode: syncOptions.forceFullTimesheets ? "full" : "incremental", errors, warnings },
+      stats: result.stats,
       finished_at: new Date().toISOString(),
     });
-    return { status, stats: { ...stats, mode: syncOptions.forceFullTimesheets ? "full" : "incremental", errors, warnings }, errors, warnings };
+    queueDashboardRefresh(supabase);
+    return result;
   } catch (error) {
     await updateSyncLog(supabase, log?.id, { status: "failed", message: syncErrorMessage(error), stats, finished_at: new Date().toISOString() });
     throw error;
   }
+}
+
+function queueDashboardRefresh(supabase: ReturnType<typeof serviceClient>) {
+  const refresh = supabase.rpc("rebuild_dashboard_experience_records").then(({ error }) => {
+    if (error) console.warn("QuickBooks Time dashboard refresh failed", syncErrorMessage(error));
+  }).catch((error) => {
+    console.warn("QuickBooks Time dashboard refresh failed", syncErrorMessage(error));
+  });
+  const runtime = (globalThis as unknown as { EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void } }).EdgeRuntime;
+  if (typeof runtime?.waitUntil === "function") {
+    runtime.waitUntil(refresh);
+    return;
+  }
+  void refresh;
 }
 
 async function updateSyncLog(supabase: ReturnType<typeof serviceClient>, logId: string | undefined, patch: Record<string, unknown>) {
