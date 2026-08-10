@@ -117,6 +117,7 @@ export function renderShell(profile) {
   });
   const email = document.querySelector("[data-user-email]");
   if (email) email.textContent = profile.email;
+  document.documentElement.dataset.shellReady = "true";
   bindLogout();
 }
 
