@@ -1,4 +1,4 @@
-# API Data Management Platform
+# Hayat Brown Data Tools Site
 
 A lightweight internal API platform using Supabase for auth, database, storage, row level security, user management, and Edge Functions. The frontend is plain HTML, CSS, and JavaScript.
 
