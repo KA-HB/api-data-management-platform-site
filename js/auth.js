@@ -10,6 +10,7 @@ export const AUTH_TIMEOUT_REASON_KEY = "data-platform-auth-timeout-reason";
 let sessionWatcherStarted = false;
 let sessionTimeoutInProgress = false;
 let lastActivityWrite = 0;
+let scrollRegionObserverStarted = false;
 
 export async function currentProfile() {
   const { data: sessionData } = await supabase.auth.getSession();
@@ -99,6 +100,7 @@ export function renderShell(profile) {
   }
   prepareShellNavigation(nav);
   enhanceScrollableRegions();
+  observeScrollableRegions();
   requestAnimationFrame(enhanceScrollableRegions);
   setTimeout(enhanceScrollableRegions, 1000);
   document.querySelectorAll("[data-admin-only]").forEach((el) => {
@@ -222,6 +224,20 @@ function enhanceScrollableRegions() {
     notice.setAttribute("role", notice.classList.contains("error") ? "alert" : "status");
     notice.setAttribute("aria-live", notice.classList.contains("error") ? "assertive" : "polite");
   });
+}
+
+function observeScrollableRegions() {
+  if (scrollRegionObserverStarted) return;
+  scrollRegionObserverStarted = true;
+  const root = document.querySelector(".content") || document.body;
+  const observer = new MutationObserver((mutations) => {
+    const addedScrollableRegion = mutations.some((mutation) => [...mutation.addedNodes].some((node) => (
+      node.nodeType === Node.ELEMENT_NODE
+      && (node.matches?.(".table-wrap, .chart-scroll") || node.querySelector?.(".table-wrap, .chart-scroll"))
+    )));
+    if (addedScrollableRegion) enhanceScrollableRegions();
+  });
+  observer.observe(root, { childList: true, subtree: true });
 }
 
 export function clearAuthTimeoutMessage() {
