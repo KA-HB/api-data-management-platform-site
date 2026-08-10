@@ -6,6 +6,7 @@ const SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 const SESSION_IDLE_TIMEOUT_MS = 60 * 60 * 1000;
 const SESSION_META_KEY = "data-platform-sso-session";
 export const AUTH_TIMEOUT_REASON_KEY = "data-platform-auth-timeout-reason";
+const USER_ANALYZE_PAGES = new Set(["user-dashboard.html", "monthly-report.html", "search.html"]);
 
 let sessionWatcherStarted = false;
 let sessionTimeoutInProgress = false;
@@ -45,6 +46,10 @@ export async function requireAuth(requiredRole = null) {
     location.href = profile.role === "admin" ? "./admin-dashboard.html" : "./user-dashboard.html";
     return null;
   }
+  if (profile.role !== "admin" && inPagesDirectory() && !USER_ANALYZE_PAGES.has(currentPageName())) {
+    location.href = "./user-dashboard.html";
+    return null;
+  }
   return profile;
 }
 
@@ -65,6 +70,10 @@ function inPagesDirectory() {
     .replace(/\\/g, "/")
     .split("/")
     .includes("pages");
+}
+
+function currentPageName() {
+  return location.pathname.replace(/\\/g, "/").split("/").pop() || "";
 }
 
 export async function logout() {
@@ -98,7 +107,7 @@ export function renderShell(profile) {
     nav.appendChild(themeButton);
     initTheme();
   }
-  prepareShellNavigation(nav);
+  prepareShellNavigation(nav, profile);
   enhanceScrollableRegions();
   observeScrollableRegions();
   requestAnimationFrame(enhanceScrollableRegions);
@@ -111,12 +120,21 @@ export function renderShell(profile) {
   bindLogout();
 }
 
-function prepareShellNavigation(nav) {
+function prepareShellNavigation(nav, profile) {
   if (!nav) return;
   nav.setAttribute("aria-label", "Primary navigation");
   const sidebar = nav.closest(".sidebar");
   if (!sidebar) return;
   sidebar.id ||= "app-sidebar";
+
+  if (profile.role !== "admin") {
+    const adminDashboardLink = nav.querySelector('a[href="./admin-dashboard.html"]');
+    if (adminDashboardLink) adminDashboardLink.href = "./user-dashboard.html";
+    nav.querySelectorAll(":scope > a").forEach((link) => {
+      const page = new URL(link.href, location.href).pathname.split("/").pop();
+      if (!USER_ANALYZE_PAGES.has(page)) link.remove();
+    });
+  }
 
   const brand = sidebar.querySelector(".brand");
   if (brand && !brand.querySelector(".brand-mark")) {
