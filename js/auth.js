@@ -10,6 +10,7 @@ const USER_ANALYZE_PAGES = new Set(["user-dashboard.html", "monthly-report.html"
 
 let sessionWatcherStarted = false;
 let sessionTimeoutInProgress = false;
+let sessionTimeoutTimer = null;
 let lastActivityWrite = 0;
 let scrollRegionObserverStarted = false;
 
@@ -313,7 +314,7 @@ function startSessionWatcher() {
   ["click", "keydown", "mousemove", "scroll", "touchstart"].forEach((eventName) => {
     window.addEventListener(eventName, recordActivity, { passive: true });
   });
-  setInterval(checkSessionTimeout, 60 * 1000);
+  scheduleSessionTimeoutCheck();
 }
 
 function recordActivity() {
@@ -327,15 +328,33 @@ function recordActivity() {
     return;
   }
   writeSessionMeta({ ...meta, last_active_at: now });
+  scheduleSessionTimeoutCheck();
 }
 
 async function checkSessionTimeout() {
+  sessionTimeoutTimer = null;
   if (sessionTimeoutInProgress) return;
+  const reason = sessionTimeoutReason();
+  if (!reason) {
+    scheduleSessionTimeoutCheck();
+    return;
+  }
   const { data } = await supabase.auth.getSession();
   if (!data.session) return;
   ensureSessionMeta(data.session);
-  const reason = sessionTimeoutReason();
-  if (reason) await endTimedOutSession(reason);
+  await endTimedOutSession(reason);
+}
+
+function scheduleSessionTimeoutCheck() {
+  if (sessionTimeoutTimer) window.clearTimeout(sessionTimeoutTimer);
+  const meta = readSessionMeta();
+  if (!meta.login_at) return;
+
+  const now = Date.now();
+  const absoluteRemaining = SESSION_MAX_AGE_MS - (now - Number(meta.login_at));
+  const idleRemaining = SESSION_IDLE_TIMEOUT_MS - (now - Number(meta.last_active_at || meta.login_at));
+  const delay = Math.max(1000, Math.min(absoluteRemaining, idleRemaining) + 1000);
+  sessionTimeoutTimer = window.setTimeout(checkSessionTimeout, delay);
 }
 
 function sessionTimeoutReason() {
@@ -368,6 +387,10 @@ async function endTimedOutSession(reason) {
 }
 
 function clearSessionTracking({ preserveTimeoutReason = false } = {}) {
+  if (sessionTimeoutTimer) {
+    window.clearTimeout(sessionTimeoutTimer);
+    sessionTimeoutTimer = null;
+  }
   try {
     localStorage.removeItem(SESSION_META_KEY);
     if (!preserveTimeoutReason) localStorage.removeItem(AUTH_TIMEOUT_REASON_KEY);
