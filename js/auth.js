@@ -6,7 +6,7 @@ const SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 const SESSION_IDLE_TIMEOUT_MS = 60 * 60 * 1000;
 const SESSION_META_KEY = "data-platform-sso-session";
 export const AUTH_TIMEOUT_REASON_KEY = "data-platform-auth-timeout-reason";
-const USER_ANALYZE_PAGES = new Set(["user-dashboard.html", "monthly-report.html", "search.html"]);
+const USER_ANALYZE_PAGES = new Set(["user-dashboard.html", "monthly-report.html", "anomalies.html", "search.html"]);
 
 let sessionWatcherStarted = false;
 let sessionTimeoutInProgress = false;
@@ -91,14 +91,7 @@ export function renderShell(profile) {
   startSessionWatcher();
   initTheme();
   const nav = document.querySelector(".nav");
-  if (nav && !nav.querySelector('a[href="./monthly-report.html"]')) {
-    const reportLink = document.createElement("a");
-    reportLink.href = "./monthly-report.html";
-    reportLink.textContent = "Monthly Report";
-    reportLink.classList.toggle("active", location.pathname.endsWith("/monthly-report.html"));
-    const dashboardLink = nav.querySelector('a[href="./admin-dashboard.html"], a[href="./user-dashboard.html"]');
-    dashboardLink?.insertAdjacentElement("afterend", reportLink);
-  }
+  ensureAnalyzeNavigation(nav, profile);
   if (nav && !document.querySelector("[data-theme-toggle]")) {
     const themeButton = document.createElement("button");
     themeButton.type = "button";
@@ -119,6 +112,33 @@ export function renderShell(profile) {
   if (email) email.textContent = profile.email;
   document.documentElement.dataset.shellReady = "true";
   bindLogout();
+}
+
+function ensureAnalyzeNavigation(nav, profile) {
+  if (!nav) return;
+
+  const dashboardHref = profile.role === "admin" ? "./admin-dashboard.html" : "./user-dashboard.html";
+  const items = [
+    { label: "Dashboard", href: dashboardHref, pages: ["admin-dashboard.html", "user-dashboard.html"] },
+    { label: "Monthly Report", href: "./monthly-report.html", pages: ["monthly-report.html"] },
+    { label: "Anomalies", href: "./anomalies.html", pages: ["anomalies.html"] },
+    { label: "Search Data", href: "./search.html", pages: ["search.html"] },
+  ];
+  const links = [...nav.querySelectorAll(":scope > a")];
+  const analyzeLinks = document.createDocumentFragment();
+
+  items.forEach(({ label, href, pages }) => {
+    const link = links.find((candidate) => {
+      const page = new URL(candidate.href, location.href).pathname.split("/").pop();
+      return pages.includes(page);
+    }) || document.createElement("a");
+    link.href = href;
+    link.textContent = label;
+    link.removeAttribute("data-admin-only");
+    analyzeLinks.appendChild(link);
+  });
+
+  nav.insertBefore(analyzeLinks, nav.firstChild);
 }
 
 function prepareShellNavigation(nav, profile) {
