@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Search Data</title>
   <script src="../js/theme-init.js"></script>
-  <link rel="stylesheet" href="../css/styles.css?v=20260810d">
+  <link rel="stylesheet" href="../css/styles.css?v=20260811e">
 </head>
 <body>
   <div class="app-shell">
@@ -147,26 +147,46 @@
       </datalist>
 
       <section class="grid four search-metrics">
-        <div class="metric"><strong id="search-unique-records">-</strong><span>Unique records</span></div>
-        <div class="metric"><strong id="search-raw-records">-</strong><span>Raw rows</span></div>
-        <div class="metric"><strong id="search-datasets">-</strong><span>Datasets</span></div>
-        <div class="metric"><strong id="search-hours">-</strong><span>Hours found</span></div>
+        <div class="metric"><strong id="search-unique-records">-</strong><span>Time entries</span></div>
+        <div class="metric"><strong id="search-hours">-</strong><span>Total hours</span></div>
+        <div class="metric"><strong id="search-employees">-</strong><span>Employees</span></div>
+        <div class="metric"><strong id="search-projects">-</strong><span>Projects</span></div>
       </section>
 
-      <section class="grid two">
-        <div class="panel chart-panel">
-          <div class="section-head">
-            <h2>Matches by Dataset</h2>
-            <p id="search-scope-summary">All authorized datasets</p>
-          </div>
-          <canvas id="search-records-by-dataset"></canvas>
+      <section class="panel search-insights-summary">
+        <div class="section-head">
+          <h2>Search Insights</h2>
+          <p id="search-scope-summary">Choose a dataset or apply a filter to load analytics.</p>
         </div>
-        <div class="panel chart-panel">
+      </section>
+
+      <section class="grid two search-chart-grid">
+        <div class="panel chart-panel search-chart-panel">
           <div class="section-head">
-            <h2>Matches Over Time</h2>
-            <p>Unique records by work date where available.</p>
+            <h2>Hours by Project</h2>
+            <p>Top matching job codes by total hours.</p>
           </div>
-          <canvas id="search-records-over-time"></canvas>
+          <div class="chart-scroll" tabindex="0" aria-label="Scrollable hours by project chart">
+            <div class="chart-frame"><canvas id="search-hours-by-project"></canvas></div>
+          </div>
+        </div>
+        <div class="panel chart-panel search-chart-panel">
+          <div class="section-head">
+            <h2>Hours Over Time</h2>
+            <p id="search-timeline-detail">Matching hours grouped by work date.</p>
+          </div>
+          <div class="chart-scroll" tabindex="0" aria-label="Scrollable hours over time chart">
+            <div class="chart-frame"><canvas id="search-hours-over-time"></canvas></div>
+          </div>
+        </div>
+        <div class="panel chart-panel search-chart-panel search-chart-wide">
+          <div class="section-head">
+            <h2>Hours by Service Item</h2>
+            <p>Top matching service items by total hours.</p>
+          </div>
+          <div class="chart-scroll" tabindex="0" aria-label="Scrollable hours by service item chart">
+            <div class="chart-frame"><canvas id="search-hours-by-service"></canvas></div>
+          </div>
         </div>
       </section>
 
@@ -206,6 +226,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script type="module" src="../js/search.js?v=20260811b"></script>
+  <script type="module" src="../js/search.js?v=20260811c"></script>
 </body>
 </html>
