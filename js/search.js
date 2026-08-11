@@ -136,9 +136,40 @@ async function callSearchAdvanced(payload, pageSize, offset) {
 }
 
 async function callSearchSummary(payload) {
+  if (canUseRollupSummary(payload)) {
+    const rollup = await supabase.rpc("dashboard_qbtime_rollups", {
+      dataset_uuid: payload.dataset_uuid,
+      keyword_filter: payload.search_term,
+      employee_filter: payload.employee_filter || payload.user_filter,
+      start_date: payload.p_start_date,
+      end_date: payload.p_end_date,
+      jobcode_level1_filter: payload.jobcode_filter,
+      jobcode_level2_filter: null,
+      jobcode_level3_filter: null,
+      service_item_filter: payload.service_item_filter,
+    });
+    if (!rollup.error) return { data: normalizeRollupSummary(rollup.data, payload), error: null };
+  }
   const result = await supabase.rpc("experience_search_summary", payload);
   if (!isSchemaCacheError(result.error)) return result;
   return supabase.rpc("search_records_summary", legacySearchPayload(payload));
+}
+
+function canUseRollupSummary(payload) {
+  return !payload.exact_key && !payload.exact_value && !payload.status_filter && !payload.customer_filter;
+}
+
+function normalizeRollupSummary(data = {}, payload = {}) {
+  return {
+    ...data,
+    dataset_name: payload.dataset_uuid ? datasetName() : "All authorized datasets",
+    unique_records: Number(data.unique_records ?? data.filtered_timesheets ?? 0),
+    raw_records: Number(data.raw_records ?? data.filtered_timesheets ?? 0),
+    employee_count: Number(data.employee_count ?? data.filtered_employees ?? 0),
+    jobcode_count: Number(data.jobcode_count ?? data.filtered_jobcodes ?? 0),
+    service_item_count: Number(data.service_item_count ?? data.filtered_service_items ?? 0),
+    hours: Number(data.hours ?? data.filtered_hours ?? 0),
+  };
 }
 
 function legacySearchPayload(payload) {
@@ -286,21 +317,41 @@ function renderSearchSummary(data = null) {
   lastSummary = data;
   if (!data) {
     setText("#search-unique-records", "-");
-    setText("#search-raw-records", "-");
-    setText("#search-datasets", "-");
     setText("#search-hours", "-");
-    setText("#search-scope-summary", "Choose a dataset or apply a filter to load scoped search visuals.");
-    renderChart("#search-records-by-dataset", "bar", [], "name", "records", "Unique Records");
-    renderChart("#search-records-over-time", "line", [], "date", "records", "Unique Records");
+    setText("#search-employees", "-");
+    setText("#search-projects", "-");
+    setText("#search-scope-summary", "Choose a dataset or apply a filter to load analytics.");
+    setText("#search-timeline-detail", "Matching hours grouped by work date.");
+    renderChart("#search-hours-by-project", "bar", [], "jobcode", "hours", "Hours");
+    renderChart("#search-hours-over-time", "line", [], "date", "hours", "Hours");
+    renderChart("#search-hours-by-service", "bar", [], "service_item", "hours", "Hours");
     return;
   }
   setText("#search-unique-records", formatNumber(data.unique_records));
-  setText("#search-raw-records", formatNumber(data.raw_records));
-  setText("#search-datasets", formatNumber(data.dataset_count));
-  setText("#search-hours", formatNumber(data.hours));
+  setText("#search-hours", formatHours(data.hours));
+  setText("#search-employees", formatNumber(data.employee_count));
+  setText("#search-projects", formatNumber(data.jobcode_count));
   setText("#search-scope-summary", scopeSummary(data));
-  renderChart("#search-records-by-dataset", "bar", data.records_by_dataset || [], "name", "records", "Unique Records");
-  renderChart("#search-records-over-time", "line", data.records_by_day || [], "date", "records", "Unique Records");
+
+  const projectRows = data.hours_by_jobcode || [];
+  const serviceRows = data.hours_by_service_item || [];
+  const timeline = prepareTimeline(data.hours_by_day || []);
+  setText("#search-timeline-detail", timeline.detail);
+  renderChart("#search-hours-by-project", "bar", projectRows, "jobcode", "hours", "Hours", {
+    color: "#0f766e",
+    height: chartBarHeight(projectRows.length),
+    minWidth: 760,
+  });
+  renderChart("#search-hours-over-time", "line", timeline.rows, "label", "hours", "Hours", {
+    color: "#2563eb",
+    minWidth: timeline.minWidth,
+    height: 360,
+  });
+  renderChart("#search-hours-by-service", "bar", serviceRows, "service_item", "hours", "Hours", {
+    color: "#7c3aed",
+    height: chartBarHeight(serviceRows.length),
+    minWidth: 900,
+  });
 }
 
 function renderRelevantFields(row) {
@@ -427,23 +478,82 @@ function formatNumber(value) {
   return Number(value || 0).toLocaleString();
 }
 
-function scopeSummary(data) {
-  const scope = data.dataset_name || "All authorized datasets";
-  const duplicates = Number(data.duplicates_removed || 0);
-  const duplicateText = duplicates ? `${formatNumber(duplicates)} duplicate rows excluded.` : "No duplicate rows found.";
-  return `${scope}: ${formatNumber(data.unique_records)} unique records from ${formatNumber(data.raw_records)} raw rows. ${duplicateText}`;
+function formatHours(value) {
+  return Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
-function renderChart(selector, type, rows, labelKey, valueKey, label) {
+function scopeSummary(data) {
+  const scope = data.dataset_name || "All authorized datasets";
+  const dateRange = data.date_start || data.date_end
+    ? `${formatDateValue(data.date_start)} to ${formatDateValue(data.date_end)}`
+    : "all available dates";
+  return `${scope}: ${formatNumber(data.unique_records)} time entries, ${formatHours(data.hours)} hours, ${formatNumber(data.employee_count)} employees, and ${formatNumber(data.jobcode_count)} projects across ${dateRange}.`;
+}
+
+function prepareTimeline(rows = []) {
+  const validRows = rows
+    .filter((row) => row?.date)
+    .map((row) => ({ date: String(row.date).slice(0, 10), hours: Number(row.hours || 0) }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (!validRows.length) {
+    return { rows: [], detail: "No dated hours match the current filters.", minWidth: 760 };
+  }
+
+  const grouping = validRows.length > 180 ? "month" : validRows.length > 62 ? "week" : "day";
+  const totals = new Map();
+  for (const row of validRows) {
+    const key = timelineKey(row.date, grouping);
+    totals.set(key, (totals.get(key) || 0) + row.hours);
+  }
+  const groupedRows = [...totals.entries()].map(([date, hours]) => ({
+    date,
+    label: timelineLabel(date, grouping),
+    hours: Number(hours.toFixed(2)),
+  }));
+  return {
+    rows: groupedRows,
+    detail: `Matching hours grouped by ${grouping}. Scroll horizontally to review the full period.`,
+    minWidth: Math.max(760, groupedRows.length * (grouping === "day" ? 54 : 78)),
+  };
+}
+
+function timelineKey(dateString, grouping) {
+  if (grouping === "month") return dateString.slice(0, 7);
+  if (grouping !== "week") return dateString;
+  const date = new Date(`${dateString}T00:00:00Z`);
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() - day + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function timelineLabel(key, grouping) {
+  const date = new Date(`${grouping === "month" ? `${key}-01` : key}T00:00:00Z`);
+  if (grouping === "month") return date.toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
+  if (grouping === "week") return `Week of ${date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}`;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit", timeZone: "UTC" });
+}
+
+function chartBarHeight(rowCount) {
+  return Math.max(320, Math.min(720, Math.max(rowCount, 1) * 42 + 56));
+}
+
+function renderChart(selector, type, rows, labelKey, valueKey, label, settings = {}) {
   const canvas = $(selector);
   if (!canvas || !window.Chart) return;
   charts.get(selector)?.destroy();
   const context = canvas.getContext("2d");
-  const dataRows = rows?.length ? rows : [{ [labelKey]: "No data", [valueKey]: 0 }];
+  const dataRows = rows?.length ? rows : [{ [labelKey]: "No matching data", [valueKey]: 0 }];
   const isBar = type === "bar";
   const dark = document.documentElement.dataset.theme === "dark";
   const axisColor = dark ? "#b8c2d6" : "#475467";
   const gridColor = dark ? "rgba(184, 194, 214, .18)" : "#eef2f7";
+  const chartColor = settings.color || "#2563eb";
+  const frame = canvas.closest(".chart-frame");
+  if (frame) {
+    frame.style.width = `${Math.max(Number(settings.minWidth || 0), frame.parentElement?.clientWidth || 0)}px`;
+    frame.style.height = `${Number(settings.height || 340)}px`;
+  }
+  canvas.setAttribute("aria-label", `${label} chart with ${rows?.length || 0} categories`);
   charts.set(selector, new Chart(context, {
     type,
     data: {
@@ -451,21 +561,43 @@ function renderChart(selector, type, rows, labelKey, valueKey, label) {
       datasets: [{
         label,
         data: dataRows.map((row) => Number(row[valueKey] || 0)),
-        borderColor: "#2563eb",
-        backgroundColor: type === "line" ? "rgba(37, 99, 235, .16)" : ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#0891b2", "#7c3aed", "#475569"],
+        borderColor: chartColor,
+        backgroundColor: type === "line" ? `${chartColor}24` : `${chartColor}d9`,
         borderWidth: 2,
         tension: 0.28,
         fill: type === "line",
+        pointRadius: type === "line" && dataRows.length > 50 ? 0 : 3,
+        pointHoverRadius: 5,
+        borderRadius: isBar ? 4 : 0,
       }],
     },
     options: {
       indexAxis: isBar ? "y" : "x",
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      interaction: { mode: "nearest", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => items[0]?.label || "",
+            label: (item) => `${label}: ${formatHours(item.raw)}`,
+          },
+        },
+      },
       scales: {
-        x: { beginAtZero: isBar, ticks: { maxRotation: 0, autoSkip: true, color: axisColor }, grid: { display: false } },
-        y: { beginAtZero: !isBar, ticks: { color: axisColor, callback: isBar ? shortTick : numberTick }, grid: { color: gridColor } },
+        x: {
+          beginAtZero: isBar,
+          ticks: { maxRotation: 0, autoSkip: !isBar, color: axisColor, callback: isBar ? numberTick : undefined },
+          grid: { color: isBar ? gridColor : "transparent" },
+          title: { display: isBar, text: label, color: axisColor },
+        },
+        y: {
+          beginAtZero: !isBar,
+          ticks: { color: axisColor, callback: isBar ? shortTick : numberTick },
+          grid: { display: !isBar, color: gridColor },
+          title: { display: !isBar, text: label, color: axisColor },
+        },
       },
     },
   }));
@@ -473,7 +605,7 @@ function renderChart(selector, type, rows, labelKey, valueKey, label) {
 
 function shortTick(value) {
   const label = this.getLabelForValue ? this.getLabelForValue(value) : String(value);
-  return label.length > 28 ? `${label.slice(0, 25)}...` : label;
+  return label.length > 42 ? `${label.slice(0, 39)}...` : label;
 }
 
 function numberTick(value) {
