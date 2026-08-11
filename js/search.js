@@ -1,4 +1,4 @@
-import { requireAuth, renderShell } from "./auth.js?v=20260811a";
+import { requireAuth, renderShell } from "./auth.js?v=20260811b";
 import { supabase } from "./supabaseClient.js";
 import { $, escapeHtml, renderRows, setButtonBusy, setText, startProgress, stopProgress, toast, updateProgress } from "./ui.js";
 
@@ -13,6 +13,7 @@ let activeSearchRun = 0;
 if (profile) {
   renderShell(profile);
   await loadDatasetOptions();
+  const hasDefaultDataset = selectDefaultDataset();
   renderSearchSummary(null);
   $("#search-form")?.addEventListener("submit", runSearch);
   initSearchControls();
@@ -22,6 +23,7 @@ if (profile) {
   $("#export-json")?.addEventListener("click", exportJson);
   document.addEventListener("themechange", () => renderSearchSummary(lastSummary));
   updatePager();
+  if (hasDefaultDataset) await runSearch();
 }
 
 function initSearchControls() {
@@ -54,6 +56,15 @@ async function loadDatasetOptions() {
   const { data, error } = await supabase.from("datasets").select("id,name").neq("name", "QuickBooks Time PTO").order("name");
   if (error) return toast(error.message, "error");
   $("#dataset").innerHTML = `<option value="">All authorized datasets</option>${(data || []).map((d) => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join("")}`;
+}
+
+function selectDefaultDataset() {
+  const select = $("#dataset");
+  const options = [...(select?.options || [])].filter((option) => option.value);
+  const preferred = options.find((option) => /QuickBooks Time Timesheets/i.test(option.textContent || "")) || options[0];
+  if (!preferred || !select) return false;
+  select.value = preferred.value;
+  return true;
 }
 
 async function runSearch(event = null) {
