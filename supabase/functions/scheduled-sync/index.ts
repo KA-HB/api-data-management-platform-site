@@ -3,7 +3,11 @@ import { serviceClient } from "../_shared/supabase.ts";
 
 Deno.serve(async (req) => {
   const secret = Deno.env.get("SCHEDULE_SECRET");
-  if (secret && req.headers.get("x-schedule-secret") !== secret) {
+  if (!secret) {
+    console.error("Scheduled sync is disabled because SCHEDULE_SECRET is not configured");
+    return jsonResponse({ error: "Scheduled sync is not configured" }, 503);
+  }
+  if (req.headers.get("x-schedule-secret") !== secret) {
     return jsonResponse({ error: "Unauthorized" }, 401);
   }
 
@@ -18,7 +22,7 @@ Deno.serve(async (req) => {
   const response = await fetch(qbtimeUrl, {
     method: "POST",
     headers: {
-      "x-schedule-secret": secret || "",
+      "x-schedule-secret": secret,
       "Content-Type": "application/json",
     },
   });
