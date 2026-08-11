@@ -588,7 +588,9 @@ function renderChart(selector, type, rows, labelKey, valueKey, label, settings =
       scales: {
         x: {
           beginAtZero: isBar,
-          ticks: { maxRotation: 0, autoSkip: !isBar, color: axisColor, callback: isBar ? numberTick : undefined },
+          ticks: isBar
+            ? { maxRotation: 0, color: axisColor, callback: numberTick }
+            : { maxRotation: 0, autoSkip: true, color: axisColor },
           grid: { color: isBar ? gridColor : "transparent" },
           title: { display: isBar, text: label, color: axisColor },
         },
