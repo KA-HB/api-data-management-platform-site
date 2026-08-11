@@ -1,8 +1,8 @@
-import { requireAuth, renderShell } from "./auth.js";
+import { requireAuth, renderShell } from "./auth.js?v=20260811a";
 import { supabase } from "./supabaseClient.js";
 import { $, escapeHtml, renderRows, setButtonBusy, setText, startProgress, stopProgress, toast } from "./ui.js";
 
-const profile = await requireAuth("admin");
+const profile = await requireAuth();
 const charts = new Map();
 let filterOptions = null;
 let lastAnomalies = [];
