@@ -1,5 +1,5 @@
 import { supabase } from "./supabaseClient.js";
-import { AUTH_TIMEOUT_REASON_KEY, redirectFromLogin } from "./auth.js?v=20260810d";
+import { AUTH_TIMEOUT_REASON_KEY, redirectFromLogin } from "./auth.js?v=20260811b";
 import { $, initTheme, setButtonBusy, toast } from "./ui.js";
 
 const azureLogin = $("#azure-login");
