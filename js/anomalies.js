@@ -107,17 +107,18 @@ function renderBillingAudit(data) {
   const summary = data.summary || {};
   lastBillingAuditRows = data.audit_rows || data.findings || [];
   setText("#billing-metric-findings", formatNumber(summary.findings));
-  setText("#billing-metric-high", formatNumber(summary.high_findings));
+  setText("#billing-metric-risk-hours", formatHours(summary.typically_billable_nonbillable_hours));
+  setText("#billing-metric-risk-jobs", formatNumber(summary.typically_billable_jobs_affected));
   setText("#billing-metric-employees", formatNumber(summary.employees_flagged));
-  setText("#billing-metric-reviewed", formatNumber(summary.current_combinations));
   setText("#billing-filter-summary", `${formatNumber(summary.current_entries)} current entries and ${formatNumber(summary.current_hours)} hours reviewed from ${formatDate(summary.current_start)} to ${formatDate(summary.current_end)}.`);
-  setText("#billing-audit-summary", `${formatNumber(summary.findings)} findings across ${formatNumber(summary.current_combinations)} current combinations, compared with approved history from ${formatDate(summary.historical_start)} to ${formatDate(summary.historical_end)}.`);
+  setText("#billing-audit-summary", `${formatNumber(summary.findings)} findings across ${formatNumber(summary.current_combinations)} current combinations. ${formatHours(summary.typically_billable_nonbillable_hours)} non-billable hours are on jobs that were at least 95% billable in approved history from ${formatDate(summary.historical_start)} to ${formatDate(summary.historical_end)}.`);
   setText("#billing-results-summary", lastBillingAuditRows.length
     ? `${formatNumber(lastBillingAuditRows.length)} classifications shown, including correct and excluded combinations.`
     : "No current combinations matched these filters.");
 
   const cards = $("#billing-summary-cards");
   if (cards) cards.innerHTML = [
+    insightCard("Typically billable job risk", formatHours(summary.typically_billable_nonbillable_hours), `${formatNumber(summary.typically_billable_nonbillable_entries)} entries across ${formatNumber(summary.typically_billable_jobs_affected)} jobs`),
     insightCard("Correct", formatNumber(summary.correct_combinations), "Current billing choice matches approved history"),
     insightCard("Excluded", formatNumber(summary.excluded_combinations), "Nonbillable and structural categories separated from findings"),
     insightCard("New jobs", formatNumber(summary.new_job_codes), "No employee history for the Job Code 1 and 2 pair"),
@@ -126,6 +127,7 @@ function renderBillingAudit(data) {
 
   renderChart("#billing-by-result", "bar", data.by_result || [], "result", "count", "Combinations");
   renderChart("#billing-by-employee", "bar", data.by_employee || [], "employee", "findings", "Findings");
+  renderChart("#billing-risk-by-job", "bar", data.nonbillable_by_job || [], "job", "nonbillable_hours", "Non-billable hours");
   renderRows($("#billing-results-body"), lastBillingAuditRows, [
     (r) => `<span class="status ${billingStatusClass(r)}">${escapeHtml(r.result || "Unknown")}</span>`,
     (r) => escapeHtml(r.employee),
@@ -136,6 +138,7 @@ function renderBillingAudit(data) {
     (r) => escapeHtml(r.current_billable),
     (r) => formatNumber(r.current_hours),
     (r) => formatNumber(r.current_entries),
+    (r) => r.job_overall_historical_billable_pct == null ? "-" : `${formatNumber(r.job_overall_historical_billable_pct)}%`,
     (r) => r.historical_billable_pct == null ? "-" : `${formatNumber(r.historical_billable_pct)}%`,
     (r) => r.historical_hours == null ? "-" : formatNumber(r.historical_hours),
     (r) => r.historical_entries == null ? "-" : formatNumber(r.historical_entries),
@@ -494,9 +497,9 @@ function clearBillingAudit() {
 function resetBillingResults() {
   lastBillingAuditRows = [];
   setText("#billing-metric-findings", "-");
-  setText("#billing-metric-high", "-");
+  setText("#billing-metric-risk-hours", "-");
+  setText("#billing-metric-risk-jobs", "-");
   setText("#billing-metric-employees", "-");
-  setText("#billing-metric-reviewed", "-");
   setText("#billing-filter-summary", "Compare current billing choices with each employee's approved historical patterns.");
   setText("#billing-audit-summary", "Run the audit to compare current entries with approved history.");
   setText("#billing-results-summary", "Run the audit to load results.");
@@ -506,7 +509,9 @@ function resetBillingResults() {
   charts.delete("#billing-by-result");
   charts.get("#billing-by-employee")?.destroy();
   charts.delete("#billing-by-employee");
-  renderRows($("#billing-results-body"), [], Array.from({ length: 13 }, () => () => ""));
+  charts.get("#billing-risk-by-job")?.destroy();
+  charts.delete("#billing-risk-by-job");
+  renderRows($("#billing-results-body"), [], Array.from({ length: 14 }, () => () => ""));
 }
 
 function rerunIfReady(event = null) {
@@ -569,7 +574,9 @@ function exportBillingAudit() {
     "Current Billable": row.current_billable,
     "Current Hours": Number(row.current_hours || 0),
     "Current Entries": Number(row.current_entries || 0),
-    "Historical Billable %": row.historical_billable_pct == null ? "" : Number(row.historical_billable_pct),
+    "Job-wide Historical Billable %": row.job_overall_historical_billable_pct == null ? "" : Number(row.job_overall_historical_billable_pct),
+    "Employee / Service Historical Billable %": row.historical_billable_pct == null ? "" : Number(row.historical_billable_pct),
+    "Job-wide Historical Entries": row.job_overall_historical_entries == null ? "" : Number(row.job_overall_historical_entries),
     "Historical Hours": row.historical_hours == null ? "" : Number(row.historical_hours),
     "Historical Entries": row.historical_entries == null ? "" : Number(row.historical_entries),
     "First Work Date": row.first_work,
@@ -607,6 +614,10 @@ function numberValue(selector, fallback) {
 
 function formatNumber(value) {
   return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function formatHours(value) {
+  return `${formatNumber(value)} hrs`;
 }
 
 function formatDate(value) {
