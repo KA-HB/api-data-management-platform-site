@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Anomaly Detection</title>
   <script src="../js/theme-init.js"></script>
-  <link rel="stylesheet" href="../css/styles.css?v=20260810c">
+  <link rel="stylesheet" href="../css/styles.css?v=20260812b">
 </head>
 <body>
 <div class="app-shell">
@@ -60,9 +60,9 @@
 
       <section class="grid four">
         <div class="metric"><strong id="billing-metric-findings">-</strong><span>Findings</span></div>
-        <div class="metric"><strong id="billing-metric-high">-</strong><span>Incorrect billing flags</span></div>
+        <div class="metric"><strong id="billing-metric-risk-hours">-</strong><span>At-risk non-billable hours</span></div>
+        <div class="metric"><strong id="billing-metric-risk-jobs">-</strong><span>Typically billable jobs affected</span></div>
         <div class="metric"><strong id="billing-metric-employees">-</strong><span>Employees flagged</span></div>
-        <div class="metric"><strong id="billing-metric-reviewed">-</strong><span>Combinations reviewed</span></div>
       </section>
 
       <section class="panel analytics-summary-panel">
@@ -75,11 +75,19 @@
         <div class="panel chart-panel tall-chart"><h2>Findings by Employee</h2><canvas id="billing-by-employee"></canvas></div>
       </section>
 
+      <section class="panel chart-panel wide-chart billing-risk-chart">
+        <div class="section-head">
+          <h2>Non-billable Hours on Typically Billable Jobs</h2>
+          <p>Current non-billable hours on Job Code 1 and 2 pairs that were at least 95% billable in approved history.</p>
+        </div>
+        <canvas id="billing-risk-by-job"></canvas>
+      </section>
+
       <section class="panel">
         <div class="section-head"><h2>Billing Audit Results</h2><p id="billing-results-summary">Run the audit to load results.</p></div>
         <div class="table-wrap audit-results-window">
           <table class="experience-table anomaly-table">
-            <thead><tr><th>Result</th><th>Employee</th><th>Reason</th><th>Job Code 1</th><th>Job Code 2</th><th>Service Item</th><th>Current Billable</th><th>Current Hours</th><th>Current Entries</th><th>Historical Billable</th><th>Historical Hours</th><th>Historical Entries</th><th>Date Range</th></tr></thead>
+            <thead><tr><th>Result</th><th>Employee</th><th>Reason</th><th>Job Code 1</th><th>Job Code 2</th><th>Service Item</th><th>Current Billable</th><th>Current Hours</th><th>Current Entries</th><th>Job Historical Billable</th><th>Employee / Service Historical</th><th>Historical Hours</th><th>Historical Entries</th><th>Date Range</th></tr></thead>
             <tbody id="billing-results-body"></tbody>
           </table>
         </div>
@@ -134,6 +142,6 @@
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="../js/anomalies.js?v=20260811b"></script>
+<script type="module" src="../js/anomalies.js?v=20260812b"></script>
 </body>
 </html>
