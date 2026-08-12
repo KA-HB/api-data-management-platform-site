@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Monthly Billable Hours</title>
   <script src="../js/theme-init.js"></script>
-  <link rel="stylesheet" href="../css/styles.css?v=20260810d">
+  <link rel="stylesheet" href="../css/styles.css?v=20260812a">
 </head>
 <body>
 <div class="app-shell">
@@ -70,7 +70,7 @@
     <section class="panel">
       <div class="section-head">
         <h2>Job Code Detail</h2>
-        <p id="report-table-summary">Generate a report to load monthly totals.</p>
+        <p id="report-table-summary">Generate a report to load monthly totals. Select a row to see who charged the job.</p>
       </div>
       <div class="table-wrap">
         <table class="monthly-report-table">
@@ -84,16 +84,52 @@
               <th class="numeric">Employees</th>
               <th>First Work</th>
               <th>Last Work</th>
+              <th>Breakdown</th>
             </tr>
           </thead>
           <tbody id="monthly-report-body"></tbody>
         </table>
       </div>
     </section>
+
+    <section id="job-breakdown-panel" class="panel monthly-breakdown-panel hidden" aria-live="polite">
+      <div class="section-head">
+        <div>
+          <h2 id="breakdown-title">Hours Breakdown</h2>
+          <p id="breakdown-summary">Select a Job Code 1 / Job Code 2 row above.</p>
+        </div>
+        <button id="close-breakdown" class="secondary" type="button">Close details</button>
+      </div>
+      <div class="grid four compact-metrics breakdown-metrics">
+        <div class="metric"><strong id="breakdown-billable-hours">-</strong><span>Billable hours</span></div>
+        <div class="metric nonbillable-metric"><strong id="breakdown-nonbillable-hours">-</strong><span>Non-billable hours</span></div>
+        <div class="metric"><strong id="breakdown-employees">-</strong><span>Employees</span></div>
+        <div class="metric"><strong id="breakdown-entries">-</strong><span>Total entries</span></div>
+      </div>
+      <div id="breakdown-warning" class="notice error hidden"></div>
+      <div class="table-wrap breakdown-table-wrap">
+        <table class="monthly-breakdown-table">
+          <thead>
+            <tr>
+              <th>Billing</th>
+              <th>Employee</th>
+              <th>Job Code 1</th>
+              <th>Job Code 2</th>
+              <th>Service Item</th>
+              <th class="numeric">Hours</th>
+              <th class="numeric">Entries</th>
+              <th>First Work</th>
+              <th>Last Work</th>
+            </tr>
+          </thead>
+          <tbody id="monthly-breakdown-body"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-<script type="module" src="../js/monthly-report.js?v=20260811b"></script>
+<script type="module" src="../js/monthly-report.js?v=20260812a"></script>
 <script src="../js/table-sort.js?v=20260806b" defer></script>
 </body>
 </html>
