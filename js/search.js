@@ -1,4 +1,4 @@
-import { requireAuth, renderShell } from "./auth.js?v=20260811b";
+import { requireAuth, renderShell } from "./auth.js?v=20260813a";
 import { supabase } from "./supabaseClient.js";
 import { $, escapeHtml, renderRows, setButtonBusy, setText, startProgress, stopProgress, toast, updateProgress } from "./ui.js";
 
