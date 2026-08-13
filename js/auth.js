@@ -119,14 +119,23 @@ function ensureAnalyzeNavigation(nav, profile) {
   if (!nav) return;
 
   const dashboardHref = profile.role === "admin" ? "./admin-dashboard.html" : "./user-dashboard.html";
-  const items = [
+  const analyzeItems = [
     { label: "Dashboard", href: dashboardHref, pages: ["admin-dashboard.html", "user-dashboard.html"] },
     { label: "Monthly Report", href: "./monthly-report.html", pages: ["monthly-report.html"] },
     { label: "Anomalies", href: "./anomalies.html", pages: ["anomalies.html"] },
     { label: "Search Data", href: "./search.html", pages: ["search.html"] },
   ];
+  const adminItems = [
+    { label: "Users", href: "./users.html", pages: ["users.html"] },
+    { label: "Datasets", href: "./datasets.html", pages: ["datasets.html"] },
+    { label: "API Keys", href: "./api-keys.html", pages: ["api-keys.html"] },
+    { label: "Activity Logs", href: "./logs.html", pages: ["logs.html"] },
+    { label: "QuickBooks Time", href: "./qbtime.html", pages: ["qbtime.html"] },
+    { label: "Settings", href: "./settings.html", pages: ["settings.html"] },
+  ];
+  const items = profile.role === "admin" ? [...analyzeItems, ...adminItems] : analyzeItems;
   const links = [...nav.querySelectorAll(":scope > a")];
-  const analyzeLinks = document.createDocumentFragment();
+  const roleLinks = document.createDocumentFragment();
 
   items.forEach(({ label, href, pages }) => {
     const link = links.find((candidate) => {
@@ -136,10 +145,11 @@ function ensureAnalyzeNavigation(nav, profile) {
     link.href = href;
     link.textContent = label;
     link.removeAttribute("data-admin-only");
-    analyzeLinks.appendChild(link);
+    roleLinks.appendChild(link);
   });
 
-  nav.insertBefore(analyzeLinks, nav.firstChild);
+  nav.querySelectorAll(":scope > a, :scope > .nav-section-label").forEach((element) => element.remove());
+  nav.insertBefore(roleLinks, nav.firstChild);
 }
 
 function prepareShellNavigation(nav, profile) {
