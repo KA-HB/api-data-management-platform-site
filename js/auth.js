@@ -126,6 +126,7 @@ function ensureAnalyzeNavigation(nav, profile) {
     { label: "Search Data", href: "./search.html", pages: ["search.html"] },
   ];
   const adminItems = [
+    { label: "AR Aging Report", href: "./ar-aging-report.html", pages: ["ar-aging-report.html"] },
     { label: "Users", href: "./users.html", pages: ["users.html"] },
     { label: "Datasets", href: "./datasets.html", pages: ["datasets.html"] },
     { label: "API Keys", href: "./api-keys.html", pages: ["api-keys.html"] },
@@ -196,7 +197,7 @@ function prepareShellNavigation(nav, profile) {
 
   if (!nav.querySelector(".nav-section-label")) {
     const groups = [
-      { label: "Analyze", pages: ["admin-dashboard.html", "user-dashboard.html", "monthly-report.html", "anomalies.html", "search.html"] },
+      { label: "Analyze", pages: ["admin-dashboard.html", "user-dashboard.html", "monthly-report.html", "ar-aging-report.html", "anomalies.html", "search.html"] },
       { label: "Manage", pages: ["users.html", "datasets.html", "my-datasets.html", "api-keys.html", "api-docs.html"] },
       { label: "System", pages: ["logs.html", "qbtime.html", "settings.html", "account.html"] },
     ];

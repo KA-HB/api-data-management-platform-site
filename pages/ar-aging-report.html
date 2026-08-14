@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AR Aging Report</title>
+  <script src="../js/theme-init.js"></script>
+  <link rel="stylesheet" href="../css/styles.css?v=20260814a">
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar"><div class="brand">Hayat Brown Data Tools Site</div><nav class="nav"><a href="./admin-dashboard.html">Dashboard</a><a class="active" href="./ar-aging-report.html">AR Aging Report</a><button data-logout>Logout</button></nav></aside>
+  <main class="content">
+    <div class="topbar"><div><h1>AR Aging Report</h1><p data-user-email></p></div></div>
+    <section class="panel">
+      <div class="section-head"><div><h2>Choose the primary AR workbook</h2><p>Generate the approved Invoice Detail and Expenses outputs. Workbook contents are processed only in this browser.</p></div></div>
+      <form id="ar-aging-form" class="report-upload-form">
+        <label>AR workbook <input id="ar-aging-file" type="file" accept=".xlsx,.xls,.csv" required></label>
+        <button id="load-ar-workbook" type="submit">Review Workbook</button>
+        <button id="clear-ar-workbook" class="secondary" type="button">Clear</button>
+      </form>
+      <div id="ar-aging-status" class="notice info">Choose an Excel or CSV file to begin.</div>
+    </section>
+    <section id="ar-column-panel" class="panel hidden">
+      <div class="section-head"><div><h2>Confirm columns</h2><p>Suggested matches are selected automatically. Adjust any field before generating the report.</p></div></div>
+      <div id="ar-column-mappings" class="mapping-grid"></div>
+      <div class="form-actions"><button id="generate-ar-report" type="button">Generate Excel Report</button></div>
+    </section>
+    <section id="ar-preview-panel" class="panel hidden">
+      <div class="section-head"><div><h2>Report preview</h2><p id="ar-preview-summary"></p></div></div>
+      <section class="grid four compact-metrics">
+        <div class="metric"><strong id="ar-source-rows">-</strong><span>Source rows</span></div>
+        <div class="metric"><strong id="ar-invoice-rows">-</strong><span>Invoice detail rows</span></div>
+        <div class="metric"><strong id="ar-expense-rows">-</strong><span>Expense rows</span></div>
+        <div class="metric"><strong id="ar-pending-total">-</strong><span>Pending amount</span></div>
+      </section>
+      <div class="table-wrap"><table><thead><tr><th>Project</th><th>Job Code 1</th><th>Job Code 2</th><th>Billing Status</th><th>Total Late Amount</th><th>Days Late</th></tr></thead><tbody id="ar-preview-body"></tbody></table></div>
+    </section>
+  </main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script type="module" src="../js/ar-aging-report.js?v=20260814a"></script>
+</body>
+</html>
