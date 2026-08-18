@@ -4,6 +4,9 @@
     "#employee-experience-body",
     "#experience-detail-body",
     "#monthly-report-body",
+    "#monthly-breakdown-body",
+    "#billing-results-body",
+    "#anomaly-results-body",
   ];
   const sortState = new WeakMap();
 
@@ -119,3 +122,4 @@
     });
   }
 })();
+
