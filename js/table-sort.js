@@ -5,6 +5,7 @@
     "#experience-detail-body",
     "#monthly-report-body",
     "#monthly-breakdown-body",
+    "#monthly-entry-body",
     "#billing-results-body",
     "#anomaly-results-body",
   ];
