@@ -5,7 +5,10 @@ import { $, escapeHtml, renderRows, setButtonBusy, setText, startProgress, stopP
 const profile = await requireAuth();
 let chart = null;
 let report = null;
+let breakdown = null;
+let displayedEntries = null;
 let activeBreakdownRun = 0;
+let activeEntryRun = 0;
 
 if (profile) {
   renderShell(profile);
@@ -18,7 +21,11 @@ function bindEvents() {
   $("#monthly-report-form")?.addEventListener("submit", generateReport);
   $("#export-report")?.addEventListener("click", exportCsv);
   $("#monthly-report-body")?.addEventListener("click", handleReportRowClick);
+  $("#monthly-breakdown-body")?.addEventListener("click", handleBreakdownEntryClick);
+  $("#export-breakdown-entries")?.addEventListener("click", exportAllBreakdownEntries);
+  $("#export-entry-details")?.addEventListener("click", exportDisplayedEntries);
   $("#close-breakdown")?.addEventListener("click", closeBreakdown);
+  $("#close-entry-details")?.addEventListener("click", closeEntryDetails);
 }
 
 async function generateReport(event = null) {
@@ -114,11 +121,14 @@ async function loadBreakdown(index) {
   const run = ++activeBreakdownRun;
   const panel = $("#job-breakdown-panel");
   panel?.classList.remove("hidden");
+  breakdown = null;
+  setBreakdownExportEnabled(false);
+  closeEntryDetails();
   setText("#breakdown-title", selected.jobcode_level1 + " / " + selected.jobcode_level2);
   setText("#breakdown-summary", "Loading employee, service item, and billing details...");
   setBreakdownMetrics(null);
   $("#breakdown-warning")?.classList.add("hidden");
-  $("#monthly-breakdown-body").innerHTML = '<tr><td colspan="9" class="muted">Loading exact monthly hours...</td></tr>';
+  $("#monthly-breakdown-body").innerHTML = '<tr><td colspan="10" class="muted">Loading exact monthly hours...</td></tr>';
   markSelectedReportRow(index);
   panel?.scrollIntoView({ behavior: "smooth", block: "start" });
 
@@ -132,7 +142,7 @@ async function loadBreakdown(index) {
     setText("#breakdown-summary", /monthly_job_hours_breakdown|schema cache/i.test(error.message || "")
       ? "The monthly breakdown database function has not been deployed yet."
       : error.message);
-    $("#monthly-breakdown-body").innerHTML = '<tr><td colspan="9" class="muted">Breakdown unavailable.</td></tr>';
+    $("#monthly-breakdown-body").innerHTML = '<tr><td colspan="10" class="muted">Breakdown unavailable.</td></tr>';
     return;
   }
 
@@ -146,6 +156,8 @@ function renderBreakdown(data, selected) {
   const nonbillableHours = Number(summary.nonbillable_hours || 0);
   const totalEntries = Number(summary.billable_entries || 0) + Number(summary.nonbillable_entries || 0);
   const matchesLine = Math.abs(billableHours - Number(selected.hours || 0)) < 0.011;
+  breakdown = { ...data, rows, selected };
+  rows.forEach((row, index) => { row.entry_detail_index = index; });
 
   setBreakdownMetrics({ ...summary, total_entries: totalEntries });
   setText(
@@ -174,10 +186,148 @@ function renderBreakdown(data, selected) {
     (row) => '<span class="numeric-value">' + formatNumber(row.timesheets) + '</span>',
     (row) => escapeHtml(formatDate(row.first_work)),
     (row) => escapeHtml(formatDate(row.last_work)),
+    (row) => '<button class="secondary compact-button entry-detail-button" type="button" data-entry-detail-index="' + row.entry_detail_index + '">View entries</button>',
   ]);
   $("#monthly-breakdown-body")?.querySelectorAll("tr").forEach((tableRow, index) => {
     tableRow.classList.toggle("nonbillable-row", !rows[index]?.is_billable);
+    tableRow.dataset.entryDetailIndex = String(index);
   });
+  setBreakdownExportEnabled(totalEntries > 0);
+}
+
+function handleBreakdownEntryClick(event) {
+  const target = event.target.closest("[data-entry-detail-index]");
+  const index = Number(target?.dataset.entryDetailIndex);
+  if (!Number.isInteger(index)) return;
+  loadEntryDetails(index);
+}
+
+async function loadEntryDetails(index) {
+  const selected = breakdown?.rows?.[index];
+  const selectedJob = breakdown?.selected;
+  if (!selected || !selectedJob) return;
+
+  const run = ++activeEntryRun;
+  const panel = $("#monthly-entry-panel");
+  panel?.classList.remove("hidden");
+  displayedEntries = null;
+  setText("#entry-detail-title", selected.employee + " — " + selected.service_item);
+  setText("#entry-detail-summary", "Loading individual time entries and comments...");
+  $("#monthly-entry-body").innerHTML = '<tr><td colspan="7" class="muted">Loading individual entries...</td></tr>';
+  const exportButton = $("#export-entry-details");
+  if (exportButton) exportButton.disabled = true;
+  markSelectedBreakdownRow(index);
+  panel?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  const { data, error } = await requestMonthlyEntries(selectedJob, {
+    employeeId: selected.employee_id,
+    serviceItem: selected.service_item,
+    isBillable: selected.is_billable,
+  });
+  if (run !== activeEntryRun) return;
+  if (error) {
+    setText("#entry-detail-summary", entryDetailError(error));
+    $("#monthly-entry-body").innerHTML = '<tr><td colspan="7" class="muted">Entry details unavailable.</td></tr>';
+    return;
+  }
+
+  renderEntryDetails(data || {}, selected, selectedJob);
+}
+
+function renderEntryDetails(data, selected, selectedJob) {
+  const rows = data.rows || [];
+  const summary = data.summary || {};
+  displayedEntries = { ...data, rows, selected, selectedJob };
+
+  setText(
+    "#entry-detail-summary",
+    formatNumber(summary.entry_count) + " individual entries, " +
+      formatHours(summary.hours) + " hours, and " +
+      formatNumber(summary.entries_with_comments) + " comments from QuickBooks Time notes."
+  );
+
+  renderRows($("#monthly-entry-body"), rows, [
+    (row) => escapeHtml(formatDate(row.work_date)),
+    (row) => escapeHtml(formatEntryStart(row.start_time)),
+    (row) => row.is_billable
+      ? '<span class="status ok">Billable</span>'
+      : '<span class="status danger">Non-billable</span>',
+    (row) => escapeHtml(row.employee),
+    (row) => escapeHtml(row.service_item),
+    (row) => '<span class="numeric-value">' + formatHours(row.hours) + '</span>',
+    (row) => row.comment
+      ? '<div class="entry-comment">' + escapeHtml(row.comment) + '</div>'
+      : '<span class="muted">No comment</span>',
+  ]);
+
+  const exportButton = $("#export-entry-details");
+  if (exportButton) exportButton.disabled = !rows.length;
+}
+
+async function exportAllBreakdownEntries() {
+  const selectedJob = breakdown?.selected;
+  if (!selectedJob) return;
+
+  const button = $("#export-breakdown-entries");
+  setButtonBusy(button, true, "Preparing export...");
+  const { data, error } = await requestMonthlyEntries(selectedJob);
+  setButtonBusy(button, false);
+  if (error) return toast(entryDetailError(error), "error");
+
+  exportEntryCsv(
+    data?.rows || [],
+    "monthly-time-entries-" + $("#report-month").value + "-" + safeFilePart(selectedJob.jobcode_level1) + "-" + safeFilePart(selectedJob.jobcode_level2) + ".csv"
+  );
+}
+
+function exportDisplayedEntries() {
+  const rows = displayedEntries?.rows || [];
+  if (!rows.length) return;
+  const selected = displayedEntries.selected;
+  exportEntryCsv(
+    rows,
+    "monthly-time-entries-" + $("#report-month").value + "-" + safeFilePart(selected.employee) + ".csv"
+  );
+}
+
+function requestMonthlyEntries(selectedJob, filters = {}) {
+  const hasEmployeeFilter = Object.prototype.hasOwnProperty.call(filters, "employeeId");
+  return supabase.rpc("monthly_time_entry_details", {
+    p_report_month: $("#report-month").value + "-01",
+    p_selected_jobcode_level1: selectedJob.jobcode_level1,
+    p_selected_jobcode_level2: selectedJob.jobcode_level2,
+    p_selected_employee_id: hasEmployeeFilter ? String(filters.employeeId ?? "") : null,
+    p_selected_service_item: filters.serviceItem || null,
+    p_selected_is_billable: typeof filters.isBillable === "boolean" ? filters.isBillable : null,
+  });
+}
+
+function exportEntryCsv(rows, filename) {
+  if (!rows.length) return toast("No individual entries are available to export.", "error");
+
+  const columns = [
+    ["Entry ID", (row) => row.entry_id],
+    ["Work Date", (row) => row.work_date],
+    ["Start", (row) => row.start_time],
+    ["Billing", (row) => row.is_billable ? "Billable" : "Non-billable"],
+    ["Employee", (row) => row.employee],
+    ["Job Code 1", (row) => row.jobcode_level1],
+    ["Job Code 2", (row) => row.jobcode_level2],
+    ["Service Item", (row) => row.service_item],
+    ["Hours", (row) => Number(row.hours || 0).toFixed(2)],
+    ["Comments", (row) => row.comment],
+  ];
+  const csv = [
+    columns.map(([heading]) => csvCell(heading)).join(","),
+    ...rows.map((row) => columns.map(([, value]) => csvCell(value(row))).join(",")),
+  ].join("\r\n");
+  downloadCsv(csv, filename);
+}
+
+function entryDetailError(error) {
+  return /monthly_time_entry_details|schema cache/i.test(error?.message || "")
+    ? "The individual entry database function has not been deployed yet."
+    : error?.message || "Individual entries could not be loaded.";
 }
 
 function setBreakdownMetrics(summary) {
@@ -188,14 +338,42 @@ function setBreakdownMetrics(summary) {
 }
 
 function markSelectedReportRow(index) {
-  $("#monthly-report-body")?.querySelectorAll("tr").forEach((row, rowIndex) => {
-    row.classList.toggle("selected-report-row", rowIndex === index);
-    row.querySelector("[data-breakdown-index]")?.setAttribute("aria-pressed", rowIndex === index ? "true" : "false");
+  $("#monthly-report-body")?.querySelectorAll("tr").forEach((row) => {
+    const button = row.querySelector("[data-breakdown-index]");
+    const isSelected = Number(button?.dataset.breakdownIndex) === index;
+    row.classList.toggle("selected-report-row", isSelected);
+    button?.setAttribute("aria-pressed", isSelected ? "true" : "false");
   });
+}
+
+function markSelectedBreakdownRow(index) {
+  $("#monthly-breakdown-body")?.querySelectorAll("tr").forEach((row) => {
+    const button = row.querySelector("[data-entry-detail-index]");
+    const isSelected = Number(button?.dataset.entryDetailIndex) === index;
+    row.classList.toggle("selected-breakdown-row", isSelected);
+    button?.setAttribute("aria-pressed", isSelected ? "true" : "false");
+  });
+}
+
+function setBreakdownExportEnabled(enabled) {
+  const button = $("#export-breakdown-entries");
+  if (button) button.disabled = !enabled;
+}
+
+function closeEntryDetails() {
+  activeEntryRun += 1;
+  displayedEntries = null;
+  $("#monthly-entry-panel")?.classList.add("hidden");
+  markSelectedBreakdownRow(-1);
+  const exportButton = $("#export-entry-details");
+  if (exportButton) exportButton.disabled = true;
 }
 
 function closeBreakdown() {
   activeBreakdownRun += 1;
+  breakdown = null;
+  setBreakdownExportEnabled(false);
+  closeEntryDetails();
   $("#job-breakdown-panel")?.classList.add("hidden");
   markSelectedReportRow(-1);
 }
@@ -290,10 +468,13 @@ function exportCsv() {
     columns.map(([heading]) => csvCell(heading)).join(","),
     ...rows.map((row) => columns.map(([, value]) => csvCell(value(row))).join(",")),
   ].join("\r\n");
+  downloadCsv(csv, "monthly-billable-hours-" + $("#report-month").value + ".csv");
+}
 
+function downloadCsv(csv, filename) {
   const link = document.createElement("a");
   link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-  link.download = "monthly-billable-hours-" + $("#report-month").value + ".csv";
+  link.download = filename;
   link.click();
   URL.revokeObjectURL(link.href);
 }
@@ -334,3 +515,15 @@ function formatDate(value) {
 function formatDateTime(value) {
   return new Date(value).toLocaleString();
 }
+
+function formatEntryStart(value) {
+  if (!value) return "-";
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) return String(value);
+  return timestamp.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+function safeFilePart(value) {
+  return String(value || "entries").trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").slice(0, 50) || "entries";
+}
+

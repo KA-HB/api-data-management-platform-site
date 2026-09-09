@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Monthly Billable Hours</title>
   <script src="../js/theme-init.js"></script>
-  <link rel="stylesheet" href="../css/styles.css?v=20260812a">
+  <link rel="stylesheet" href="../css/styles.css?v=20260909a">
 </head>
 <body>
 <div class="app-shell">
@@ -98,7 +98,10 @@
           <h2 id="breakdown-title">Hours Breakdown</h2>
           <p id="breakdown-summary">Select a Job Code 1 / Job Code 2 row above.</p>
         </div>
-        <button id="close-breakdown" class="secondary" type="button">Close details</button>
+        <div class="breakdown-actions">
+          <button id="export-breakdown-entries" class="secondary" type="button" disabled>Export entries + comments</button>
+          <button id="close-breakdown" class="secondary" type="button">Close details</button>
+        </div>
       </div>
       <div class="grid four compact-metrics breakdown-metrics">
         <div class="metric"><strong id="breakdown-billable-hours">-</strong><span>Billable hours</span></div>
@@ -120,17 +123,47 @@
               <th class="numeric">Entries</th>
               <th>First Work</th>
               <th>Last Work</th>
+              <th>Entries &amp; Comments</th>
             </tr>
           </thead>
           <tbody id="monthly-breakdown-body"></tbody>
         </table>
       </div>
+
+      <div id="monthly-entry-panel" class="monthly-entry-panel hidden" aria-live="polite">
+        <div class="section-head">
+          <div>
+            <h3 id="entry-detail-title">Time Entries &amp; Comments</h3>
+            <p id="entry-detail-summary">Select an employee line to view its individual entries.</p>
+          </div>
+          <div class="breakdown-actions">
+            <button id="export-entry-details" class="secondary" type="button" disabled>Export displayed entries</button>
+            <button id="close-entry-details" class="secondary" type="button">Close entries</button>
+          </div>
+        </div>
+        <div class="table-wrap monthly-entry-table-wrap">
+          <table class="monthly-entry-table">
+            <thead>
+              <tr>
+                <th>Work Date</th>
+                <th>Start</th>
+                <th>Billing</th>
+                <th>Employee</th>
+                <th>Service Item</th>
+                <th class="numeric">Hours</th>
+                <th>Comments</th>
+              </tr>
+            </thead>
+            <tbody id="monthly-entry-body"></tbody>
+          </table>
+        </div>
+      </div>
     </section>
   </main>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-<script type="module" src="../js/monthly-report.js?v=20260812a"></script>
-<script src="../js/table-sort.js?v=20260818a" defer></script>
+<script type="module" src="../js/monthly-report.js?v=20260909a"></script>
+<script src="../js/table-sort.js?v=20260909a" defer></script>
 </body>
 </html>
 

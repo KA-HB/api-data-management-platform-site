@@ -867,6 +867,12 @@ button.is-busy::before {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 .monthly-breakdown-panel { scroll-margin-top: 18px; }
+.breakdown-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .breakdown-metrics { margin: 4px 0 16px; }
 .breakdown-metrics .metric {
   padding: 14px;
@@ -878,7 +884,7 @@ button.is-busy::before {
   max-height: 620px;
   scrollbar-gutter: stable both-edges;
 }
-.monthly-breakdown-table { min-width: 1260px; }
+.monthly-breakdown-table { min-width: 1400px; }
 .monthly-breakdown-table th.numeric,
 .monthly-breakdown-table td:nth-child(6),
 .monthly-breakdown-table td:nth-child(7) { text-align: right; }
@@ -888,11 +894,38 @@ button.is-busy::before {
   box-shadow: inset 3px 0 0 var(--danger);
 }
 :root[data-theme="dark"] .monthly-breakdown-table .nonbillable-row { background: #2a1517; }
+.selected-breakdown-row {
+  background: var(--accent-soft) !important;
+  box-shadow: inset 3px 0 0 var(--accent) !important;
+}
+.monthly-entry-panel {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  scroll-margin-top: 18px;
+}
+.monthly-entry-table-wrap {
+  max-height: 620px;
+  scrollbar-gutter: stable both-edges;
+}
+.monthly-entry-table { min-width: 1180px; }
+.monthly-entry-table th:nth-child(6),
+.monthly-entry-table td:nth-child(6) { text-align: right; }
+.monthly-entry-table th:last-child,
+.monthly-entry-table td:last-child { width: 38%; }
+.entry-comment {
+  min-width: 280px;
+  max-width: 620px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 @media (max-width: 1100px) {
   .report-toolbar { grid-template-columns: 1fr; }
 }
 @media (max-width: 860px) {
   .report-toolbar { grid-template-columns: 1fr; }
+  .breakdown-actions { width: 100%; justify-content: stretch; }
+  .breakdown-actions button { flex: 1 1 190px; }
 }
 
 /* Shared application shell */
@@ -1145,3 +1178,4 @@ body.nav-open .nav-toggle-bars::after { transform: rotate(-45deg); }
   .anomaly-audit-actions { grid-column: auto; }
   .anomaly-audit-actions > button { width: 100%; }
 }
+
