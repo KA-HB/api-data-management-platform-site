@@ -24,6 +24,7 @@
     </section>
     <section id="ar-column-panel" class="panel hidden">
       <div class="section-head"><div><h2>Confirm columns</h2><p>Suggested matches are selected automatically. Adjust any field before generating the report.</p></div></div>
+      <p>Day Submitted is the submission date. Date Late is submission plus 30 calendar days; Days Late is 0 through that date and 1 on the following day. Late counts and amounts include only invoices beyond 30 days. Dates use YYYY-MM-DD or M/D/YYYY (US format). Missing or invalid dates are excluded from late totals.</p>
       <div id="ar-column-mappings" class="mapping-grid"></div>
       <div class="form-actions"><button id="generate-ar-report" type="button">Generate Excel Report</button></div>
     </section>
@@ -35,13 +36,13 @@
         <div class="metric"><strong id="ar-expense-rows">-</strong><span>Expense rows</span></div>
         <div class="metric"><strong id="ar-pending-total">-</strong><span>Pending amount</span></div>
       </section>
-      <div class="table-wrap"><table><thead><tr><th>Project</th><th>Job Code 1</th><th>Job Code 2</th><th>Billing Status</th><th>Total Late Amount</th><th>Days Late</th></tr></thead><tbody id="ar-preview-body"></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Project</th><th>Job Code 1</th><th>Job Code 2</th><th>Billing Status</th><th>Total Late Amount</th><th>Day Submitted</th><th>Date Late</th><th>Days Late</th></tr></thead><tbody id="ar-preview-body"></tbody></table></div>
     </section>
   </main>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module" src="../js/ar-aging-report.js?v=20260820a"></script>
+<script type="module" src="../js/ar-aging-report.js?v=20260915a"></script>
 </body>
 </html>
 
