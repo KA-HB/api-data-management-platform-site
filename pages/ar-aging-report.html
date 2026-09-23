@@ -24,7 +24,7 @@
     </section>
     <section id="ar-column-panel" class="panel hidden">
       <div class="section-head"><div><h2>Confirm columns</h2><p>Suggested matches are selected automatically. Adjust any field before generating the report.</p></div></div>
-      <p>Map Due Date and Responsible Staff when those fields are available. If Due Date is not mapped, it is calculated as 60 calendar days after Day Submitted. Only invoices past their due date are included.</p>
+      <p>Invoice Due from the input workbook supplies column E (Due Date), and Days Late is calculated from that date. Rows with a missing or invalid Invoice Due date are excluded. Responsible Staff can be mapped when available.</p>
       <div id="ar-column-mappings" class="mapping-grid"></div>
       <div class="form-actions"><button id="generate-ar-report" type="button">Generate Excel Report</button></div>
     </section>
@@ -42,7 +42,7 @@
 </div>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
-<script type="module" src="../js/ar-aging-report.js?v=20260923a"></script>
+<script type="module" src="../js/ar-aging-report.js?v=20260923b"></script>
 </body>
 </html>
 
