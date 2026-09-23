@@ -1,11 +1,11 @@
 import { requireAuth, renderShell } from "./auth.js?v=20260814a";
 import { $, escapeHtml, setButtonBusy, toast } from "./ui.js";
 
-const REQUIRED_COLUMNS = ["Projects Data", "Billing Status", "AR-PENDING", "Name", "Submission Date", "AR-RECEIVED"];
-const OPTIONAL_COLUMNS = ["Due Date", "Responsible Staff"];
+const REQUIRED_COLUMNS = ["Projects Data", "Billing Status", "AR-PENDING", "Name", "Submission Date", "Invoice Due", "AR-RECEIVED"];
+const OPTIONAL_COLUMNS = ["Responsible Staff"];
 const MAPPING_COLUMNS = [...REQUIRED_COLUMNS, ...OPTIONAL_COLUMNS];
 const MAPPING_ALIASES = {
-  "Due Date": ["Due Date", "Invoice Due Date", "Date Due"],
+  "Invoice Due": ["Invoice Due", "Invoice Due Date", "Due Date", "Date Due"],
   "Responsible Staff": ["Responsible Staff", "Project Manager", "Staff"],
 };
 const INVOICE_COLUMNS = ["Project", "Job Code 1", "Job Code 2", "Day Submitted", "Due Date", "# Total Late Invoices", "Total Late Amount", "Days Late", "Responsible Staff", "Date of Update", "Communication Outcome"];
@@ -92,7 +92,7 @@ function buildReport() {
     if (!amount) return;
     const bucket = billingBucket(row[mapping["Billing Status"]]);
     if (bucket === "Other") return;
-    const aging = invoiceAging(row[mapping["Submission Date"]], mapping["Due Date"] ? row[mapping["Due Date"]] : "", asOf);
+    const aging = invoiceAging(row[mapping["Submission Date"]], row[mapping["Invoice Due"]], asOf);
     if (aging.daysLate === "") {
       invalidDueDates += 1;
       return;
@@ -287,8 +287,7 @@ function calendarDate(year, month, day) {
 }
 function invoiceAging(submissionValue, dueValue, asOf = new Date()) {
   const submitted = parseDate(submissionValue);
-  const suppliedDue = cellText(dueValue) ? parseDate(dueValue) : null;
-  const dueDate = suppliedDue || (cellText(dueValue) ? null : addCalendarDays(submitted, 60));
+  const dueDate = parseDate(dueValue);
   if (!dueDate) return { submitted: submitted ? formatDate(submitted) : cellText(submissionValue), dueDate: cellText(dueValue), daysLate: "" };
   const today = Date.UTC(asOf.getFullYear(), asOf.getMonth(), asOf.getDate());
   return {
@@ -297,7 +296,6 @@ function invoiceAging(submissionValue, dueValue, asOf = new Date()) {
     daysLate: Math.max(0, Math.round((today - dueDate.getTime()) / 86400000)),
   };
 }
-function addCalendarDays(date, days) { return date ? new Date(date.getTime() + days * 86400000) : null; }
 function formatDate(date) { return date ? `${date.getUTCMonth() + 1}/${date.getUTCDate()}/${date.getUTCFullYear()}` : ""; }
 function reportMonth(value) { const date = parseDate(value); return date ? date.toISOString().slice(0, 7) : "NaT"; }
 function sum(rows, key) { return rows.reduce((total, row) => total + Number(row[key] || 0), 0); }
