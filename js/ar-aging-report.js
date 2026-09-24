@@ -38,7 +38,7 @@ async function loadWorkbook(event) {
     renderPreview();
     $("#ar-column-panel").classList.remove("hidden");
     $("#ar-preview-panel").classList.remove("hidden");
-    const previousStatus = previousFile ? ` Previous comments loaded from ${previousFile.name}.` : "";
+    const previousStatus = previousFile ? ` Previous report data loaded from ${previousFile.name}.` : "";
     setStatus(`${file.name}: ${sourceRows.length.toLocaleString()} rows ready.${previousStatus} Nothing was uploaded.`, "success");
   } catch (error) {
     clearData();
@@ -81,9 +81,9 @@ function buildReport() {
   const mapping = currentMapping();
   const missing = REQUIRED_COLUMNS.filter((field) => !mapping[field]);
   if (missing.length) throw new Error(`Choose columns for: ${missing.join(", ")}.`);
-  const previousComments = buildPreviousComments();
+  const previousCarryover = buildPreviousCarryover();
   const asOf = new Date();
-  let carriedCommentRows = 0;
+  let carriedRows = 0;
   let invalidDueDates = 0;
   let notYetLateRows = 0;
   const details = [];
@@ -121,8 +121,8 @@ function buildReport() {
   const totalRowIndexes = [];
   orderedGroups.forEach(([job1, rows]) => {
     [...rows].sort((a, b) => a.priority - b.priority || b.amount - a.amount || a.order - b.order).forEach((row) => {
-      const previous = previousComments.get(commentKey(row.project, row.job1, row.job2, row.amount)) || {};
-      if (previous.dateOfUpdate || previous.communicationOutcome) carriedCommentRows += 1;
+      const previous = previousCarryover.get(commentKey(row.project, row.job1, row.job2, row.amount)) || {};
+      if (previous.responsibleStaff || previous.dateOfUpdate || previous.communicationOutcome) carriedRows += 1;
       invoiceDetail.push({
         Project: row.project,
         "Job Code 1": row.job1,
@@ -132,7 +132,7 @@ function buildReport() {
         "# Total Late Invoices": 1,
         "Total Late Amount": row.amount,
         "Days Late": row.aging.daysLate,
-        "Responsible Staff": row.responsibleStaff,
+        "Responsible Staff": row.responsibleStaff || previous.responsibleStaff || "",
         "Date of Update": previous.dateOfUpdate || "",
         "Communication Outcome": previous.communicationOutcome || "",
       });
@@ -153,29 +153,32 @@ function buildReport() {
     totalRowIndexes.push(invoiceDetail.length - 1);
   });
   const expenses = sourceRows.map((row, index) => ({ row, index, received: numberValue(row[mapping["AR-RECEIVED"]]) })).filter((item) => item.received !== 0).map((item) => { const [job1, job2] = splitProject(item.row[mapping["Projects Data"]]); const submitted = item.row[mapping["Submission Date"]]; return { Project: submitted, Month: reportMonth(submitted), "Job Code 1": job1, "Job Code 2": job2, "Total Late Amount": Math.abs(item.received), order: item.index }; }).sort((a, b) => b["Total Late Amount"] - a["Total Late Amount"] || a.order - b.order).map(({ order, ...row }) => row);
-  return { invalidDueDates, notYetLateRows, invoiceDetail, totalRowIndexes, expenses, detailCount: details.length, lateAmount: sum(details, "amount"), receivedAmount: sum(expenses, "Total Late Amount"), carriedCommentRows };
+  return { invalidDueDates, notYetLateRows, invoiceDetail, totalRowIndexes, expenses, detailCount: details.length, lateAmount: sum(details, "amount"), receivedAmount: sum(expenses, "Total Late Amount"), carriedRows };
 }
 
-function buildPreviousComments() {
+function buildPreviousCarryover() {
   if (!previousRows.length) return new Map();
   const headers = Object.keys(previousRows[0]);
   const projectHeader = findHeader(headers, ["Project"]);
   const job1Header = findHeader(headers, ["Job Code 1"]);
   const job2Header = findHeader(headers, ["Job Code 2"]);
   const amountHeader = findHeader(headers, ["Pending Amount"]) || findHeader(headers, ["Total Late Amount"]);
+  const staffHeader = findHeader(headers, ["Responsible Staff"]);
   const dateHeader = findHeader(headers, ["Date of Update"]);
   const outcomeHeader = findHeader(headers, ["Communication Outcome", "Column1"]);
   const missing = [[projectHeader, "Project"], [job1Header, "Job Code 1"], [job2Header, "Job Code 2"], [amountHeader, "Total Late Amount"]].filter(([header]) => !header).map(([, label]) => label);
   if (missing.length) throw new Error(`The previous AR report is missing matching columns: ${missing.join(", ")}.`);
-  if (!dateHeader && !outcomeHeader) throw new Error("The previous AR report needs Date of Update, Communication Outcome, or the older Column1 field.");
+  if (!staffHeader && !dateHeader && !outcomeHeader) throw new Error("The previous AR report needs Responsible Staff, Date of Update, Communication Outcome, or the older Column1 field.");
 
   const comments = new Map();
   previousRows.forEach((row) => {
     const key = commentKey(row[projectHeader], row[job1Header], row[job2Header], row[amountHeader]);
     const current = comments.get(key) || {};
+    const responsibleStaff = staffHeader ? cellText(row[staffHeader]) : "";
     const dateOfUpdate = dateHeader ? cellText(row[dateHeader]) : "";
     const communicationOutcome = outcomeHeader ? cellText(row[outcomeHeader]) : "";
     comments.set(key, {
+      responsibleStaff: responsibleStaff || current.responsibleStaff || "",
       dateOfUpdate: dateOfUpdate || current.dateOfUpdate || "",
       communicationOutcome: communicationOutcome || current.communicationOutcome || "",
     });
@@ -198,7 +201,7 @@ function renderPreview() {
   $("#ar-invoice-rows").textContent = report.invoiceDetail.length.toLocaleString();
   $("#ar-expense-rows").textContent = report.expenses.length.toLocaleString();
   $("#ar-pending-total").textContent = currency(report.lateAmount);
-  const carryover = previousRows.length ? ` ${report.carriedCommentRows.toLocaleString()} rows matched previous comments.` : "";
+  const carryover = previousRows.length ? ` ${report.carriedRows.toLocaleString()} rows matched previous report data.` : "";
   const exclusions = [
     report.notYetLateRows ? `${report.notYetLateRows.toLocaleString()} not-yet-late rows excluded` : "",
     report.invalidDueDates ? `${report.invalidDueDates.toLocaleString()} rows with missing or invalid dates excluded` : "",
