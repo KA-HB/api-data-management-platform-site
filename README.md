@@ -85,7 +85,7 @@ Configure Client ID, Client Secret, and Redirect URI from the admin QuickBooks T
 
 For large historical timesheet imports, set `QB_TIME_MAX_PAGES` high enough for the expected row count. The default is `250` pages at `200` rows per page. Use `QB_TIME_SYNC_START_DATE` and `QB_TIME_SYNC_END_DATE` when you need a specific full-sync backfill window. Incremental syncs always run through the current date so an old backfill end date cannot block new timesheets.
 
-For scheduled sync, create a Supabase scheduled function or external cron that calls `scheduled-sync` with `x-schedule-secret`.
+Migration `060_daily_qbtime_sync_7am_eastern.sql` schedules the shared QuickBooks Time sync for 7:00 AM America/New_York every day and keeps that local time stable across daylight-saving changes. It calls `scheduled-sync` with `x-schedule-secret`; configure matching values in the Edge Function `SCHEDULE_SECRET` and Vault secret `qbtime_schedule_secret`.
 
 ## Security Notes
 
@@ -93,3 +93,4 @@ For scheduled sync, create a Supabase scheduled function or external cron that c
 - RLS protects datasets, records, API keys, profiles, and logs.
 - Admin-only actions are performed through authenticated Edge Functions using the service role internally.
 - QuickBooks Time secrets are encoded in the sample implementation. For production, replace the helper with a managed KMS or Supabase Vault before storing real client secrets.
+
