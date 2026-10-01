@@ -85,7 +85,7 @@ Configure Client ID, Client Secret, and Redirect URI from the admin QuickBooks T
 
 For large historical timesheet imports, set `QB_TIME_MAX_PAGES` high enough for the expected row count. The default is `250` pages at `200` rows per page. Use `QB_TIME_SYNC_START_DATE` and `QB_TIME_SYNC_END_DATE` when you need a specific full-sync backfill window. Incremental syncs always run through the current date so an old backfill end date cannot block new timesheets.
 
-Migration `060_daily_qbtime_sync_7am_eastern.sql` schedules the shared QuickBooks Time sync for 7:00 AM America/New_York every day and keeps that local time stable across daylight-saving changes. It calls `scheduled-sync` with `x-schedule-secret`; configure matching values in the Edge Function `SCHEDULE_SECRET` and Vault secret `qbtime_schedule_secret`.
+Migrations `060_daily_qbtime_sync_7am_eastern.sql` and `061_daily_qbtime_sync_3pm_eastern.sql` schedule the shared QuickBooks Time sync for 7:00 AM and 3:00 PM America/New_York every day and keep those local times stable across daylight-saving changes. They call `scheduled-sync` with `x-schedule-secret`; configure matching values in the Edge Function `SCHEDULE_SECRET` and Vault secret `qbtime_schedule_secret`.
 
 ## Security Notes
 
