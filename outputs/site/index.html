@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f5f6f8">
+  <title>Hayat Brown | IT Service Desk</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="app.css"><script type="module" src="app.js"></script>
+</head>
+<body>
+  <section id="authGate" class="auth-gate" aria-labelledby="authTitle"><div class="auth-card">
+    <a class="brand auth-brand" href="#"><span class="brand-mark">hb<span>.</span></span><span class="brand-name">hayat brown<small>TECHNOLOGY SERVICES</small></span></a>
+    <div class="auth-kicker">HAYAT BROWN · IT SERVICE DESK</div><h1 id="authTitle">Sign in to your<br>service desk.</h1>
+    <p id="authMessage">Use your Hayat Brown Microsoft account to submit and track IT requests.</p>
+    <button id="signInBtn" class="btn btn-primary microsoft-button" type="button"><span class="ms-mark"><i></i><i></i><i></i><i></i></span>Continue with Microsoft</button>
+    <div id="authSetup" class="auth-setup" hidden></div>
+    <div class="auth-domain"><span>◎</span> Access is limited to <strong>@hayatbrown.com</strong> accounts</div>
+    <div class="auth-foot">Your organization’s Microsoft sign-in protects access to the service desk.</div>
+  </div></section>
+  <div class="app-shell" id="appShell">
+    <aside class="sidebar" id="sidebar"><a class="brand" href="#home"><span class="brand-mark">hb<span>.</span></span><span class="brand-name">hayat brown<small>TECHNOLOGY SERVICES</small></span></a>
+      <div class="workspace-label">WORKSPACE</div><nav class="nav-list" aria-label="Main navigation">
+        <button class="nav-item active" data-view="home"><span class="nav-icon">◫</span>Overview</button>
+        <button class="nav-item" data-view="tickets"><span class="nav-icon">▤</span>My tickets <span class="nav-count" id="myCount">0</span></button>
+        <button class="nav-item" data-view="submit"><span class="nav-icon">＋</span>New request</button>
+        <div class="nav-divider"></div><div class="workspace-label">MANAGE</div>
+        <button class="nav-item admin-nav hidden" data-view="admin"><span class="nav-icon">◈</span>Admin console</button>
+      </nav><div class="sidebar-spacer"></div>
+      <div class="help-card"><div class="help-orb">✦</div><strong>Need a hand?</strong><p>Our service desk is here to keep your day moving.</p><a href="mailto:helpdesk@hayatbrown.com">Contact IT support <span>↗</span></a></div>
+      <div class="profile"><div class="avatar" id="userAvatar">HB</div><div class="profile-copy"><strong id="userName">Hayat Brown team</strong><span id="userEmail">hayatbrown.com</span></div><button class="dots" id="signOutBtn" aria-label="Sign out">↪</button></div>
+    </aside>
+    <main class="main-area"><header class="topbar"><button class="mobile-menu" id="menuBtn" aria-label="Open navigation">☰</button><div class="breadcrumbs"><span>Workspace</span><b>/</b><strong id="crumb">Overview</strong></div><div class="top-actions"><span class="secure-label"><i></i> Microsoft secured</span><div class="top-avatar" id="topAvatar">HB</div></div></header>
+      <div class="content" id="content"></div><footer><span>© 2026 Hayat Brown</span><span>IT Service Desk <b>·</b> Built for better workdays</span></footer>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <dialog id="ticketDialog" class="ticket-dialog"><form method="dialog"><button class="dialog-close" aria-label="Close">×</button></form><div id="dialogBody"></div></dialog>
+</body></html>
+
