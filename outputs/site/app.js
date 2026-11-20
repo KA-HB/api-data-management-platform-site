@@ -42,7 +42,6 @@ async function signIn(){
 }
 async function start(){
   document.querySelector("#signInBtn").addEventListener("click",signIn);
-  document.querySelector("#signInBtn").addEventListener("click",signIn);
   document.querySelector("#signOutBtn").addEventListener("click",async()=>{await supabase.auth.signOut();location.reload();});
   if(location.protocol!=="https:"&&!(location.protocol==="http:"&&["localhost","127.0.0.1"].includes(location.hostname))){authMessage("Open this site over HTTPS to use Microsoft sign-in.");return;}
   try{
