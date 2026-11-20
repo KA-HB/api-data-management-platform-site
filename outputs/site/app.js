@@ -24,12 +24,11 @@ const timeAgo = d => { const m=Math.max(1,Math.floor((Date.now()-new Date(d))/60
 
 function toast(message){const el=document.querySelector("#toast");el.textContent=message;el.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove("show"),3200);}
 function authMessage(message){document.querySelector("#authMessage").textContent=message;const box=document.querySelector("#authSetup");box.hidden=false;box.textContent=message;}
-async function loadProfile(){
-  const {data:{session}}=await supabase.auth.getSession();
+async function loadProfile(session){
   if(!session?.user)return null;
   const {data,error}=await supabase.from("profiles").select("id,email,role,active").eq("id",session.user.id).maybeSingle();
   let userProfile=data;
-  if((error||!userProfile)&&session.user.id){const ensured=await supabase.rpc("ensure_current_profile");if(!ensured.error){const refreshed=await supabase.from("profiles").select("id,email,role,active").eq("id",session.user.id).maybeSingle();userProfile=refreshed.data;}}
+  if(error||!userProfile){const ensured=await supabase.rpc("ensure_current_profile");if(ensured.error)throw new Error(`Could not prepare your service desk profile: ${ensured.error.message}`);const refreshed=await supabase.from("profiles").select("id,email,role,active").eq("id",session.user.id).maybeSingle();if(refreshed.error)throw new Error(`Could not verify your service desk profile: ${refreshed.error.message}`);userProfile=refreshed.data;}
   const email=String(userProfile?.email||emailOf(session.user)).toLowerCase();
   if(!userProfile?.active||!email.endsWith("@hayatbrown.com"))return null;
   return {...userProfile,email,displayName:session.user.user_metadata?.full_name||prettyName(email)};
@@ -42,13 +41,14 @@ async function signIn(){
   if(error)throw error;
   } catch(error) {button.disabled=false;button.innerHTML='<span class="ms-mark"><i></i><i></i><i></i><i></i></span>Continue with Microsoft';authMessage(error.message||"Microsoft sign-in could not start. Check the Supabase Azure provider and allowed redirect URLs.");}
 }
-async function start(){
-  document.querySelector("#signInBtn").addEventListener("click",signIn);
-  document.querySelector("#signOutBtn").addEventListener("click",async()=>{await supabase.auth.signOut();location.reload();});
-  if(location.protocol!=="https:"&&!(location.protocol==="http:"&&["localhost","127.0.0.1"].includes(location.hostname))){authMessage("Open this site over HTTPS to use Microsoft sign-in.");return;}
+let appInitializing=false, appAuthenticated=false;
+function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
+async function waitForSession(){for(let attempt=0;attempt<24;attempt++){const {data,error}=await supabase.auth.getSession();if(error)throw error;if(data.session)return data.session;await sleep(250);}return null;}
+async function activateSession(session){
+  if(appAuthenticated||appInitializing)return;appInitializing=true;
   try{
-    const user=await loadProfile();
-    if(!user){const {data:{session}}=await supabase.auth.getSession();if(session){authMessage("Microsoft sign-in succeeded, but this account is not active for the Hayat Brown service desk.");return;}return;}
+    const user=await loadProfile(session);
+    if(!user){authMessage("Microsoft sign-in completed, but this account is not active for the service desk. Use your @hayatbrown.com work account or ask an administrator to enable your profile.");return;}
     profile=user;const adminCheck=await supabase.rpc("is_it_support_admin");profile.itSupportAdmin=!adminCheck.error&&adminCheck.data===true;authGate.hidden=true;appShell.classList.add("authenticated");
     document.querySelector("#userName").textContent=user.displayName;document.querySelector("#userEmail").textContent=user.email;
     const initials=user.displayName.split(/\s+/).map(x=>x[0]).join("").slice(0,2).toUpperCase();document.querySelector("#userAvatar").textContent=initials;document.querySelector("#topAvatar").textContent=initials;
@@ -57,8 +57,24 @@ async function start(){
     document.querySelector("#menuBtn").addEventListener("click",()=>document.querySelector("#sidebar").classList.toggle("open"));
     document.querySelector("#notifyBtn")?.addEventListener("click",()=>toast("You’re all caught up."));
     dialog.addEventListener("click",e=>{if(e.target===dialog)dialog.close();});
-    try{await refreshTickets();}catch{tickets=[];toast("The service desk database needs its one-time migration before tickets can load.");}
-    render();
+    try{await refreshTickets();}catch(error){tickets=[];toast(`Ticket queue could not load: ${error.message||"check database access"}`);}
+    render();appAuthenticated=true;
+  }catch(error){authMessage(error.message||"We couldn’t verify your Microsoft session. Refresh the page and try again.");console.error("Service desk startup failed",error);}
+  finally{appInitializing=false;}
+}
+async function start(){
+  document.querySelector("#signInBtn").addEventListener("click",signIn);
+  document.querySelector("#signOutBtn").addEventListener("click",async()=>{await supabase.auth.signOut();location.reload();});
+  if(location.protocol!=="https:"&&!(location.protocol==="http:"&&["localhost","127.0.0.1"].includes(location.hostname))){authMessage("Open this site over HTTPS to use Microsoft sign-in.");return;}
+  const callbackUrl=new URL(location.href),callbackError=callbackUrl.searchParams.get("error_description")||callbackUrl.searchParams.get("error");
+  if(callbackError){authMessage(`Microsoft sign-in could not be completed: ${callbackError}`);}
+  supabase.auth.onAuthStateChange((event,session)=>{if(session?.user&&["INITIAL_SESSION","SIGNED_IN","TOKEN_REFRESHED"].includes(event)){setTimeout(()=>{void activateSession(session);},0);}});
+  try{
+    let session;
+    if(callbackUrl.searchParams.has("code")){authMessage("Completing Microsoft sign-in…");session=await waitForSession();}
+    else{const {data,error}=await supabase.auth.getSession();if(error)throw error;session=data.session;}
+    if(session)await activateSession(session);
+    else if(callbackUrl.searchParams.has("code"))authMessage("Microsoft returned to the service desk, but the secure session was not completed. Please try signing in again. If this continues, contact IT support.");
   }catch(error){authMessage("We couldn’t verify your Microsoft session. Refresh the page and try again.");console.error("Service desk startup failed",error);}
 }
 async function refreshTickets(){
