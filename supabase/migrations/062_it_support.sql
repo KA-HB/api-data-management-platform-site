@@ -2,7 +2,7 @@ create table if not exists public.it_support_admins (
   email text primary key,
   created_at timestamptz not null default now(),
   constraint it_support_admins_hayatbrown_email
-    check (lower(email) ~ '^[^@]+@hayatbrown\.com$')
+    check (position('@' in email) > 1 and lower(email) like '%@hayatbrown.com')
 );
 
 alter table public.it_support_admins enable row level security;
