@@ -1,6 +1,13 @@
-import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./supabase-config.js";
-
+const SUPABASE_URL = "https://wtygvjmlhquzpunewpqb.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_ADLkfJjZJwW4fnbzKNDjng_EugXwZBD";
+const createClient = window.supabase?.createClient;
+if (!createClient) {
+  const button = document.querySelector("#signInBtn");
+  button?.addEventListener("click", () => {
+    document.querySelector("#authMessage").textContent = "The sign-in service could not load. Refresh the page or contact IT support.";
+  });
+  throw new Error("Supabase browser client failed to load");
+}
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
 });
