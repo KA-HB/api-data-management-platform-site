@@ -43,7 +43,7 @@ document.querySelector("#signInBtn")?.addEventListener("click", () => {
   if (!window.__itSupportLoaded) document.querySelector("#authMessage").textContent = "The sign-in app did not finish loading. Refresh the page or contact IT support.";
 });
 </script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script>const SUPABASE_URL = "https://wtygvjmlhquzpunewpqb.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_ADLkfJjZJwW4fnbzKNDjng_EugXwZBD";
 const createClient = window.supabase?.createClient;
